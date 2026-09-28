@@ -1,6 +1,6 @@
-import { UpstashRoomBackend, redisFromEnv } from "../src/redis.ts";
-import { createHandler } from "../src/router.ts";
-import { RoomService } from "../src/service.ts";
+import { UpstashRoomBackend, redisFromEnv } from "../src/redis.js";
+import { createHandler } from "../src/router.js";
+import { RoomService } from "../src/service.js";
 
 let handler: ((request: Request) => Promise<Response>) | undefined;
 

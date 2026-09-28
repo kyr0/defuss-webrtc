@@ -1,5 +1,5 @@
-import type { RoomBackend } from "./backend.ts";
-import { RoomError } from "./errors.ts";
+import type { RoomBackend } from "./backend.js";
+import { RoomError } from "./errors.js";
 import {
   addAnswer,
   addOffer,
@@ -11,8 +11,8 @@ import {
   leaveRoom,
   sweepRoom,
   toPublicState,
-} from "./state.ts";
-import type { RoomRecord, RoomState, RoomSummary, StoredRoom } from "./types.ts";
+} from "./state.js";
+import type { RoomRecord, RoomState, RoomSummary, StoredRoom } from "./types.js";
 
 const MAX_CAS_ATTEMPTS = 24;
 

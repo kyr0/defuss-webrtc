@@ -1,5 +1,5 @@
-import type { RoomBackend } from "../src/backend.ts";
-import type { StoredRoom } from "../src/types.ts";
+import type { RoomBackend } from "../src/backend.js";
+import type { StoredRoom } from "../src/types.js";
 
 function clone<T>(value: T): T {
   return structuredClone(value);

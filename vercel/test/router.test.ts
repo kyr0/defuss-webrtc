@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createHandler } from "../src/router.ts";
-import { RoomService } from "../src/service.ts";
-import { MemoryBackend } from "./memory-backend.ts";
+import { createHandler } from "../src/router.js";
+import { RoomService } from "../src/service.js";
+import { MemoryBackend } from "./memory-backend.js";
 
 function setup() {
   const service = new RoomService(new MemoryBackend(), { now: () => 1_000 });

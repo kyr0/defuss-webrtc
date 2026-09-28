@@ -1,4 +1,4 @@
-import type { StoredRoom } from "./types.ts";
+import type { StoredRoom } from "./types.js";
 
 export interface RoomBackend {
   get(name: string): Promise<StoredRoom | null>;

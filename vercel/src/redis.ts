@@ -1,6 +1,6 @@
 import { Redis } from "@upstash/redis";
-import type { RoomBackend } from "./backend.ts";
-import type { StoredRoom } from "./types.ts";
+import type { RoomBackend } from "./backend.js";
+import type { StoredRoom } from "./types.js";
 
 const PREFIX = "{defuss-webrtc}";
 const INDEX_KEY = `${PREFIX}:rooms`;

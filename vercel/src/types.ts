@@ -1,4 +1,4 @@
-import type { PasswordHash } from "./auth.ts";
+import type { PasswordHash } from "./auth.js";
 
 export interface Member {
   peerId: string;

@@ -1,6 +1,6 @@
-import { ROOM_PASSWORD_HEADER, SERVER_PASSWORD_HEADER, readPasswordHeader, safeEqual } from "./auth.ts";
-import { RoomError } from "./errors.ts";
-import type { RoomService } from "./service.ts";
+import { ROOM_PASSWORD_HEADER, SERVER_PASSWORD_HEADER, readPasswordHeader, safeEqual } from "./auth.js";
+import { RoomError } from "./errors.js";
+import type { RoomService } from "./service.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const JSON_HEADERS = { "Content-Type": "application/json; charset=utf-8" };

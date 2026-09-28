@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RoomError } from "../src/errors.ts";
-import { RoomService } from "../src/service.ts";
-import { MemoryBackend } from "./memory-backend.ts";
+import { RoomError } from "../src/errors.js";
+import { RoomService } from "../src/service.js";
+import { MemoryBackend } from "./memory-backend.js";
 
 let clock = 1_000_000;
 const offer = (peerId: string, sessionId: string) => ({ kind: "offer", peerId, sessionId });

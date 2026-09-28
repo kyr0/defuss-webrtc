@@ -1,6 +1,6 @@
-import { hashPassword, normalizePassword, verifyPassword } from "./auth.ts";
-import { RoomError } from "./errors.ts";
-import type { BundleShape, Member, RoomRecord, RoomState } from "./types.ts";
+import { hashPassword, normalizePassword, verifyPassword } from "./auth.js";
+import { RoomError } from "./errors.js";
+import type { BundleShape, Member, RoomRecord, RoomState } from "./types.js";
 
 export const MEMBER_TTL_MS = 90_000;
 export const SIGNAL_TTL_MS = 120_000;
