@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "regions": ["fra1"],
+  "rewrites": [
+    { "source": "/v1", "destination": "/api/index?__path=/v1" },
+    { "source": "/v1/:path*", "destination": "/api/index?__path=/v1/:path*" }
+  ],
+  "functions": {
+    "api/index.ts": {
+      "maxDuration": 10
+    }
+  }
+}

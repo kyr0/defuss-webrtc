@@ -14,6 +14,11 @@ library with `npm run build`, refresh the vendored copy:
 cp -R dist docs/dist
 ```
 
+The UI is built with [defuss-shadcn](https://github.com/kyr0/defuss-shadcn)
+(plain HTML + design tokens, no build step), loaded from jsDelivr pinned to
+`@0.9.1`. It follows the OS light/dark preference. `style.css` only holds the
+page-specific layout (chat bubbles, lists, log) and uses the shadcn tokens.
+
 ## Run it
 
 Start the signaling server (see `server/README.md` for the API):
@@ -45,6 +50,12 @@ its own peer (identity lives in `sessionStorage`).
 
 The manual PEER.json file flow (fully serverless, no signal server at all) is
 still available under "Advanced: manual signaling without a server".
+
+**Passwords (optional):** if the signal server was started with
+`SERVER_PASSWORD`, enter it in *Server password*. Filling *Room password*
+before **Create room** protects the new room; protected rooms show a
+`password` badge in the list and need their password in the same field to
+join.
 
 The STUN server field defaults to Cloudflare's public STUN. Clear it for
 same-machine/LAN testing (host candidates only).

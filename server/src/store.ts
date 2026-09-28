@@ -1,3 +1,5 @@
+import { hashPassword, normalizePassword, verifyPassword, type PasswordHash } from "./auth.js";
+
 export interface Member {
   peerId: string;
   nickname: string;
@@ -26,11 +28,14 @@ export interface RoomSummary {
   name: string;
   memberCount: number;
   createdAt: number;
+  /** True when the room requires a password. */
+  protected: boolean;
 }
 
 export interface RoomState {
   name: string;
   createdAt: number;
+  protected: boolean;
   members: Member[];
   offers: SignalOffer[];
   answers: SignalAnswer[];
@@ -39,6 +44,7 @@ export interface RoomState {
 interface Room {
   name: string;
   createdAt: number;
+  password: PasswordHash | null;
   members: Map<string, Member>;
   offers: Map<string, SignalOffer>;
   answers: Map<string, SignalAnswer>;
@@ -92,6 +98,14 @@ function checkNickname(value: unknown): string {
   return value.trim();
 }
 
+function checkPassword(value: unknown): string | undefined {
+  try {
+    return normalizePassword(value);
+  } catch (error) {
+    throw new RoomError(400, "BAD_PASSWORD", (error as Error).message);
+  }
+}
+
 function checkBundle(value: unknown, kind: "offer" | "answer"): BundleShape {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new RoomError(400, "BAD_BUNDLE", "bundle must be an object");
@@ -121,16 +135,27 @@ export class RoomStore {
 
   listRooms(): RoomSummary[] {
     return [...this.#rooms.values()]
-      .map((room) => ({ name: room.name, memberCount: room.members.size, createdAt: room.createdAt }))
+      .map((room) => ({ name: room.name, memberCount: room.members.size, createdAt: room.createdAt, protected: room.password !== null }))
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
-  createRoom(name: string, body: { peerId?: unknown; nickname?: unknown }): RoomState {
+  /** Creates a room; a non-empty `password` makes every later access to it require that password. */
+  createRoom(name: string, body: { peerId?: unknown; nickname?: unknown; password?: unknown }): RoomState {
     checkName(name);
     if (this.#rooms.has(name)) throw new RoomError(409, "ROOM_EXISTS", `Room "${name}" already exists`);
-    const room: Room = { name, createdAt: this.#now(), members: new Map(), offers: new Map(), answers: new Map() };
+    const peerId = checkId(body.peerId, "peerId");
+    const nickname = checkNickname(body.nickname);
+    const password = checkPassword(body.password);
+    const room: Room = {
+      name,
+      createdAt: this.#now(),
+      password: password === undefined ? null : hashPassword(password),
+      members: new Map(),
+      offers: new Map(),
+      answers: new Map(),
+    };
     this.#rooms.set(name, room);
-    this.#addMember(room, checkId(body.peerId, "peerId"), checkNickname(body.nickname), "moderator");
+    this.#addMember(room, peerId, nickname, "moderator");
     return this.#state(room);
   }
 
@@ -142,6 +167,7 @@ export class RoomStore {
     if (!Array.isArray(body.offers)) throw new RoomError(400, "BAD_OFFERS", "offers must be an array");
 
     // Validate everything before mutating, so a bad offer cannot leave a half-joined member behind.
+    const knownSessions = new Set(room.offers.keys());
     const offers = body.offers.map((entry) => {
       const record = entry as { to?: unknown; bundle?: unknown };
       const to = checkId(record?.to, "offers[].to");
@@ -149,12 +175,32 @@ export class RoomStore {
       if (to === peerId) throw new RoomError(400, "BAD_OFFERS", "cannot address an offer to yourself");
       if (!room.members.has(to)) throw new RoomError(400, "BAD_OFFERS", `offer target ${to} is not a member of room "${name}"`);
       if (bundle.peerId !== peerId) throw new RoomError(400, "BAD_BUNDLE", "offer bundle peerId must match the joining peerId");
+      if (knownSessions.has(bundle.sessionId)) {
+        throw new RoomError(400, "BAD_OFFERS", `duplicate offer sessionId ${bundle.sessionId}`);
+      }
+      knownSessions.add(bundle.sessionId);
       return { to, bundle };
     });
 
     this.#addMember(room, peerId, nickname, "member");
     for (const offer of offers) this.#storeOffer(room, { from: peerId, to: offer.to, bundle: offer.bundle });
     return this.#state(room);
+  }
+
+  /**
+   * Access check for every room endpoint except create. Throws ROOM_NOT_FOUND
+   * for unknown rooms and BAD_ROOM_PASSWORD when a protected room's password
+   * is missing or wrong. Open rooms accept any (or no) password.
+   */
+  authorize(name: string, password: string | undefined): void {
+    const room = this.#room(name);
+    if (room.password && !verifyPassword(room.password, password)) {
+      throw new RoomError(
+        401,
+        "BAD_ROOM_PASSWORD",
+        password === undefined ? `Room "${name}" requires a password` : `Wrong password for room "${name}"`,
+      );
+    }
   }
 
   getState(name: string, heartbeatPeerId?: string): RoomState {
@@ -267,6 +313,7 @@ export class RoomStore {
     return {
       name: room.name,
       createdAt: room.createdAt,
+      protected: room.password !== null,
       members: [...room.members.values()].sort((a, b) => a.joinedAt - b.joinedAt).map((member) => ({ ...member })),
       offers: [...room.offers.values()].map((offer) => ({ ...offer })),
       answers: [...room.answers.values()].map((answer) => ({ ...answer })),

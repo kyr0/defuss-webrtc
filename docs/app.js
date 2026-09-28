@@ -12,10 +12,22 @@ let object;
 let register;
 
 function fatal(message) {
+  // defuss-shadcn destructive alert, prepended to the page.
   const banner = document.createElement("div");
-  banner.style.cssText = "background:#7f1d1d;color:#fff;padding:0.8rem 1rem;border-radius:8px;margin:1rem auto;max-width:720px;font:15px system-ui";
-  banner.textContent = message;
-  document.body.prepend(banner);
+  banner.className = "alert";
+  banner.dataset.variant = "destructive";
+  banner.setAttribute("role", "alert");
+  const content = document.createElement("div");
+  content.className = "alert-content";
+  const title = document.createElement("h5");
+  title.className = "alert-title";
+  title.textContent = "Library failed to load";
+  const description = document.createElement("p");
+  description.className = "alert-description";
+  description.textContent = message;
+  content.append(title, description);
+  banner.append(content);
+  document.querySelector("main").prepend(banner);
 }
 
 try {
@@ -64,7 +76,9 @@ const stunInput = $("stun-servers");
 const createOfferButton = $("create-offer");
 const signalFileInput = $("signal-file");
 const serverUrlInput = $("server-url");
+const serverPasswordInput = $("server-password");
 const roomNameInput = $("room-name");
+const roomPasswordInput = $("room-password");
 const createRoomButton = $("create-room");
 const joinRoomButton = $("join-room");
 const leaveRoomButton = $("leave-room");
@@ -175,6 +189,29 @@ function short(id) {
   return id.slice(0, 8);
 }
 
+function emptyItem(text) {
+  const item = document.createElement("li");
+  item.className = "empty";
+  item.textContent = text;
+  return item;
+}
+
+function badge(text, variant) {
+  const el = document.createElement("span");
+  el.className = "badge";
+  el.dataset.variant = variant;
+  el.textContent = text;
+  return el;
+}
+
+function statusItem(label, status, variant) {
+  const item = document.createElement("li");
+  const text = document.createElement("span");
+  text.textContent = label;
+  item.append(text, badge(status, variant));
+  return item;
+}
+
 async function onCreateOffer() {
   createOfferButton.disabled = true;
   try {
@@ -248,18 +285,24 @@ async function connectPeer(peer, sessionId, remotePeerId, remoteNickname, origin
 // them with the join; every member polls and answers the offers addressed to
 // it. Once answers come back, all peers are pairwise connected (full mesh).
 // ---------------------------------------------------------------------------
-let room = null; // { name, myJoinedAt, pollTimer }
+let room = null; // { name, password, myJoinedAt, pollTimer }
 const outgoing = new Map(); // offer sessionId -> { peer, toPeerId, toNickname }
 const handledOffers = new Set(); // offer sessionIds we already answered
 const acceptedAnswers = new Set(); // answer sessionIds we already consumed
 let lastSyncError = null;
 
-async function roomApi(method, path, body) {
+// Passwords travel percent-encoded in headers (header values must be ASCII).
+// `roomPassword` is only sent for room endpoints; open rooms ignore it.
+async function roomApi(method, path, body, roomPassword) {
   const base = serverUrlInput.value.trim().replace(/\/+$/, "");
   if (!base) throw new Error("Enter a signal server URL first");
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  if (serverPasswordInput.value) headers["X-Server-Password"] = encodeURIComponent(serverPasswordInput.value);
+  if (roomPassword) headers["X-Room-Password"] = encodeURIComponent(roomPassword);
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -296,9 +339,10 @@ async function createOfferFor(toPeerId, toNickname) {
 async function onCreateRoom() {
   try {
     const name = roomName();
-    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}`, { peerId: identity.peerId, nickname: identity.nickname });
-    log(`Room "${name}" created — you are the moderator. Waiting for peers to join…`);
-    enterRoom(name);
+    const password = roomPasswordInput.value;
+    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}`, { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
+    log(`Room "${name}" created${password ? " (password protected)" : ""} — you are the moderator. Waiting for peers to join…`);
+    enterRoom(name, password);
   } catch (error) {
     log(`Create room failed: ${error.message}`);
   }
@@ -308,16 +352,17 @@ async function onJoinRoom() {
   joinRoomButton.disabled = true;
   try {
     const name = roomName();
-    const state = await roomApi("GET", `/v1/rooms/${encodeURIComponent(name)}/members`);
+    const password = roomPasswordInput.value;
+    const state = await roomApi("GET", `/v1/rooms/${encodeURIComponent(name)}/members`, undefined, password);
     const others = state.members.filter((member) => member.peerId !== identity.peerId);
     log(`Joining "${name}" — creating offers for ${others.length} existing member(s)…`);
     const offers = [];
     for (const member of others) {
       offers.push({ to: member.peerId, bundle: await createOfferFor(member.peerId, member.nickname) });
     }
-    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/join`, { peerId: identity.peerId, nickname: identity.nickname, offers });
+    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/join`, { peerId: identity.peerId, nickname: identity.nickname, offers }, password);
     log(`Joined "${name}" with ${offers.length} offer(s). Waiting for answers…`);
-    enterRoom(name);
+    enterRoom(name, password);
   } catch (error) {
     log(`Join failed: ${error.message}`);
   } finally {
@@ -325,13 +370,13 @@ async function onJoinRoom() {
   }
 }
 
-function enterRoom(name) {
+function enterRoom(name, password) {
   roomDoc = getDoc(name);
   // Attach any channels that opened before the room was selected (manual flow).
   for (const conn of connections.values()) {
     if (!conn.detach) conn.detach = roomDoc.attach(conn.channel);
   }
-  room = { name, myJoinedAt: null, pollTimer: setInterval(syncRoom, 2000) };
+  room = { name, password, myJoinedAt: null, pollTimer: setInterval(syncRoom, 2000) };
   announceNickname();
   updateRoomUI();
   renderAll();
@@ -340,10 +385,10 @@ function enterRoom(name) {
 
 async function syncRoom() {
   if (!room) return;
-  const name = room.name;
+  const { name, password } = room;
   const path = `/v1/rooms/${encodeURIComponent(name)}`;
   try {
-    const state = await roomApi("GET", `${path}/members?peerId=${encodeURIComponent(identity.peerId)}`);
+    const state = await roomApi("GET", `${path}/members?peerId=${encodeURIComponent(identity.peerId)}`, undefined, password);
     lastSyncError = null;
     const me = state.members.find((member) => member.peerId === identity.peerId);
     if (!me) {
@@ -378,7 +423,7 @@ async function syncRoom() {
       try {
         const peer = new ManualPeer({ peerId: identity.peerId, iceServers: iceServers() });
         const answer = await peer.acceptOffer(offer.bundle, { metadata: { nickname: identity.nickname } });
-        await roomApi("POST", `${path}/answers`, { from: identity.peerId, to: offer.from, sessionId: offer.sessionId, bundle: answer });
+        await roomApi("POST", `${path}/answers`, { from: identity.peerId, to: offer.from, sessionId: offer.sessionId, bundle: answer }, password);
         log(`Answered the offer from ${nicknameOf(state, offer.from)}, opening channel…`);
         connectPeer(peer, offer.sessionId, offer.from, nicknameOf(state, offer.from), "room");
       } catch (error) {
@@ -393,7 +438,7 @@ async function syncRoom() {
       if (member.joinedAt >= room.myJoinedAt) continue;
       try {
         const bundle = await createOfferFor(member.peerId, member.nickname);
-        await roomApi("POST", `${path}/offers`, { from: identity.peerId, to: member.peerId, bundle });
+        await roomApi("POST", `${path}/offers`, { from: identity.peerId, to: member.peerId, bundle }, password);
         log(`Sent a late offer to ${member.nickname} (mesh repair)`);
       } catch (error) {
         log(`Late offer to ${member.nickname} failed: ${error.message}`);
@@ -408,13 +453,13 @@ async function syncRoom() {
 
 async function onLeaveRoom({ silent = false } = {}) {
   if (!room) return;
-  const { name, pollTimer } = room;
+  const { name, password, pollTimer } = room;
   clearInterval(pollTimer);
   room = null;
   roomDoc = null; // stays cached in docsByRoom; history is kept locally
   if (!silent) {
     try {
-      await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/leave`, { peerId: identity.peerId });
+      await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/leave`, { peerId: identity.peerId }, password);
     } catch (error) {
       log(`Leave request failed: ${error.message}`);
     }
@@ -434,7 +479,7 @@ async function onLeaveRoom({ silent = false } = {}) {
       conn.detach = null;
     }
   }
-  roomStatus.textContent = "";
+  roomStatus.textContent = "Create a room or join an existing one.";
   updateRoomUI();
   renderAll();
   log(`Left room "${name}". Chat history is kept locally.`);
@@ -443,7 +488,9 @@ async function onLeaveRoom({ silent = false } = {}) {
 function updateRoomUI() {
   const inRoom = room !== null;
   serverUrlInput.disabled = inRoom;
+  serverPasswordInput.disabled = inRoom;
   roomNameInput.disabled = inRoom;
+  roomPasswordInput.disabled = inRoom;
   createRoomButton.disabled = inRoom;
   joinRoomButton.disabled = inRoom;
   leaveRoomButton.disabled = !inRoom;
@@ -464,35 +511,39 @@ function renderRoomStatus(state) {
 async function refreshRooms() {
   try {
     renderRooms(await roomApi("GET", "/v1/rooms"));
-  } catch {
-    roomsList.replaceChildren();
-    const item = document.createElement("li");
-    item.className = "hint";
-    item.textContent = "Signal server unreachable.";
-    roomsList.append(item);
+  } catch (error) {
+    roomsList.replaceChildren(emptyItem(/password/i.test(error.message) ? `${error.message}.` : "Signal server unreachable."));
   }
 }
 
 function renderRooms(rooms) {
   roomsList.replaceChildren();
   if (!rooms.length) {
-    const item = document.createElement("li");
-    item.className = "hint";
-    item.textContent = "No rooms yet — create one.";
-    roomsList.append(item);
+    roomsList.append(emptyItem("No rooms yet — create one."));
     return;
   }
   for (const entry of rooms) {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = `${entry.name} — ${entry.memberCount} member(s)`;
+    label.className = "flex items-center gap-2";
+    const name = document.createElement("span");
+    name.textContent = entry.name;
+    label.append(name, badge(`${entry.memberCount} member(s)`, "secondary"));
+    if (entry.protected) label.append(badge("password", "outline"));
     item.append(label);
     if (!room) {
       const join = document.createElement("button");
-      join.className = "join-btn";
+      join.className = "btn";
+      join.dataset.variant = "outline";
+      join.dataset.size = "sm";
       join.textContent = "Join";
       join.addEventListener("click", () => {
         roomNameInput.value = entry.name;
+        if (entry.protected && !roomPasswordInput.value) {
+          log(`Room "${entry.name}" is password protected — enter its password, then click Join room.`);
+          roomPasswordInput.focus();
+          return;
+        }
         onJoinRoom();
       });
       item.append(join);
@@ -597,28 +648,21 @@ function renderIdentity() {
 function renderConnections() {
   connectionsList.replaceChildren();
   if (pendingOffer) {
-    const item = document.createElement("li");
-    item.className = "pending";
-    item.textContent = `Offer ${short(pendingOffer.sessionId)}: waiting for the answer file…`;
-    connectionsList.append(item);
+    connectionsList.append(statusItem(`Offer ${short(pendingOffer.sessionId)}`, "waiting for answer file", "outline"));
   }
   for (const pending of outgoing.values()) {
-    const item = document.createElement("li");
-    item.className = "pending";
-    item.textContent = `→ ${pending.toNickname ?? short(pending.toPeerId)}: offer sent, waiting for answer…`;
-    connectionsList.append(item);
+    connectionsList.append(statusItem(`→ ${pending.toNickname ?? short(pending.toPeerId)}`, "offer sent", "outline"));
   }
   for (const conn of connections.values()) {
-    const item = document.createElement("li");
-    item.className = conn.channel.readyState === "open" ? "open" : "pending";
-    item.textContent = `${conn.remoteNickname ?? short(conn.remotePeerId)} (${short(conn.remotePeerId)}) — channel ${conn.channel.readyState}`;
-    connectionsList.append(item);
+    const state = conn.channel.readyState;
+    connectionsList.append(statusItem(
+      `${conn.remoteNickname ?? short(conn.remotePeerId)} (${short(conn.remotePeerId)})`,
+      `channel ${state}`,
+      state === "open" ? "default" : "outline",
+    ));
   }
   if (!pendingOffer && !outgoing.size && !connections.size) {
-    const item = document.createElement("li");
-    item.className = "hint";
-    item.textContent = "No connections yet.";
-    connectionsList.append(item);
+    connectionsList.append(emptyItem("No connections yet."));
   }
 }
 
@@ -638,7 +682,7 @@ function renderMessages() {
   messagesEl.replaceChildren();
   if (!roomDoc) {
     const hint = document.createElement("div");
-    hint.className = "hint";
+    hint.className = "empty";
     hint.textContent = "Join a room to see the chat.";
     messagesEl.append(hint);
     return;
@@ -693,6 +737,7 @@ createRoomButton.addEventListener("click", onCreateRoom);
 joinRoomButton.addEventListener("click", onJoinRoom);
 leaveRoomButton.addEventListener("click", () => onLeaveRoom());
 serverUrlInput.addEventListener("change", refreshRooms);
+serverPasswordInput.addEventListener("change", refreshRooms);
 saveStateButton.addEventListener("click", onSaveState);
 stateFileInput.addEventListener("change", () => {
   const file = stateFileInput.files?.[0];

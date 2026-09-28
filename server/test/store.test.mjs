@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { RoomError, RoomStore } from "../dist/store.js";
+import { hashPassword, readPasswordHeader, safeEqual, verifyPassword } from "../dist/auth.js";
 
 let clock = 1_000_000;
 const store = (options = {}) => new RoomStore({ now: () => clock, ...options });
@@ -17,7 +18,7 @@ function createLobby() {
 test("create room: creator becomes moderator, room appears in list", () => {
   const s = createLobby();
   assert.deepEqual(s.listRooms().map((r) => ({ ...r, createdAt: 0 })), [
-    { name: "lobby", memberCount: 1, createdAt: 0 },
+    { name: "lobby", memberCount: 1, createdAt: 0, protected: false },
   ]);
   const state = s.getState("lobby");
   assert.equal(state.members.length, 1);
@@ -153,4 +154,58 @@ test("sweep: timed-out members are dropped, stale signals collected", () => {
   state = s.getState("r2");
   assert.equal(state.answers.length, 0);
   assert.equal(state.members.length, 2, "TTL only removes signals, members remain");
+});
+
+test("room password: optional, required for access once set", () => {
+  const s = store();
+  s.createRoom("open", { peerId: "alice", nickname: "Alice" });
+  s.createRoom("secret", { peerId: "carol", nickname: "Carol", password: "hunter2" });
+  assert.deepEqual(s.listRooms().map((r) => [r.name, r.protected]), [["open", false], ["secret", true]]);
+  assert.equal(s.getState("secret").protected, true);
+
+  // Open rooms accept any or no password.
+  s.authorize("open", undefined);
+  s.authorize("open", "whatever");
+
+  const denied = (e) => e instanceof RoomError && e.status === 401 && e.code === "BAD_ROOM_PASSWORD";
+  assert.throws(() => s.authorize("secret", undefined), denied);
+  assert.throws(() => s.authorize("secret", ""), denied);
+  assert.throws(() => s.authorize("secret", "hunter3"), denied);
+  s.authorize("secret", "hunter2");
+  assert.throws(() => s.authorize("missing", "x"), (e) => e.status === 404);
+});
+
+test("room password: empty string means no password, invalid values rejected before creating", () => {
+  const s = store();
+  s.createRoom("a", { peerId: "alice", nickname: "Alice", password: "" });
+  assert.equal(s.getState("a").protected, false);
+  assert.throws(() => s.createRoom("b", { peerId: "bob", nickname: "Bob", password: 42 }), (e) => e.code === "BAD_PASSWORD");
+  assert.throws(() => s.createRoom("b", { peerId: "bob", nickname: "Bob", password: "x".repeat(257) }), (e) => e.code === "BAD_PASSWORD");
+  assert.throws(() => s.createRoom("b", { peerId: "", nickname: "Bob" }), (e) => e.code === "BAD_ID");
+  assert.deepEqual(s.listRooms().map((r) => r.name), ["a"]); // no half-created room "b"
+});
+
+test("auth helpers: salted hashes, constant-time compare, header decoding", () => {
+  const h1 = hashPassword("pässwort");
+  const h2 = hashPassword("pässwort");
+  assert.notEqual(h1.hash, h2.hash); // salted
+  assert.ok(verifyPassword(h1, "pässwort"));
+  assert.ok(!verifyPassword(h1, "passwort"));
+  assert.ok(!verifyPassword(h1, undefined));
+  assert.ok(safeEqual("abc", "abc"));
+  assert.ok(!safeEqual("abc", "abcd"));
+  assert.equal(readPasswordHeader(encodeURIComponent("pässwort & co")), "pässwort & co");
+  assert.equal(readPasswordHeader(undefined), undefined);
+  assert.equal(readPasswordHeader("%E0%A4%A"), undefined); // malformed encoding
+});
+
+test("join: duplicate offer sessionIds are rejected atomically", () => {
+  const s = createLobby();
+  s.joinRoom("lobby", { peerId: "bob", nickname: "Bob", offers: [{ to: "alice", bundle: offerBundle("bob", "s1") }] });
+  // Reusing a stored sessionId, or repeating one within the same join, must not leave a half-joined member.
+  const reuse = { peerId: "carol", nickname: "Carol", offers: [{ to: "alice", bundle: offerBundle("carol", "s1") }] };
+  assert.throws(() => s.joinRoom("lobby", reuse), (e) => e.status === 400 && e.code === "BAD_OFFERS");
+  const repeat = { peerId: "carol", nickname: "Carol", offers: [{ to: "alice", bundle: offerBundle("carol", "s2") }, { to: "bob", bundle: offerBundle("carol", "s2") }] };
+  assert.throws(() => s.joinRoom("lobby", repeat), (e) => e.status === 400 && e.code === "BAD_OFFERS");
+  assert.deepEqual(s.getState("lobby").members.map((m) => m.peerId), ["alice", "bob"]);
 });

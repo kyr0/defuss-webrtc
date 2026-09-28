@@ -5,97 +5,161 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>defuss-webrtc — P2P chat example</title>
 <link rel="icon" href="data:,">
+<script>
+  // Follow the OS color scheme; defuss-shadcn switches its token set on html.dark.
+  const scheme = matchMedia("(prefers-color-scheme: dark)");
+  const applyScheme = () => document.documentElement.classList.toggle("dark", scheme.matches);
+  applyScheme();
+  scheme.addEventListener("change", applyScheme);
+</script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/core.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/all.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main>
-  <h1>defuss-webrtc P2P chat</h1>
-  <p class="hint">
-    P2P chat demo: peers find each other through a tiny room signaling server
-    (offers/answers over HTTP), then chat over direct WebRTC data channels with
-    schema-aware CRDT state sync. The server only brokers signaling — no chat
-    traffic ever passes through it. A manual file-based flow (fully serverless)
-    is available under "Advanced".
-  </p>
-
-  <section>
-    <h2>1. Your identity</h2>
-    <div class="row">
-      <label>Nickname
-        <input id="nickname" type="text" placeholder="e.g. Alice" autocomplete="off">
-      </label>
-      <button id="set-nickname">Set nickname</button>
-    </div>
-    <p id="identity-status" class="hint"></p>
-  </section>
-
-  <section>
-    <h2>2. Join a room</h2>
-    <div class="row">
-      <label>Signal server URL
-        <input id="server-url" type="text" value="http://localhost:8787" autocomplete="off">
-      </label>
-      <label>Room name
-        <input id="room-name" type="text" placeholder="e.g. lobby" autocomplete="off">
-      </label>
-    </div>
-    <div class="row">
-      <button id="create-room">Create room</button>
-      <button id="join-room">Join room</button>
-      <button id="leave-room" disabled>Leave room</button>
-    </div>
-    <p id="room-status" class="hint"></p>
-    <ul id="rooms"></ul>
-    <label>STUN server(s), comma separated — empty means host candidates only (same machine/LAN)
-      <input id="stun-servers" type="text" value="stun:stun.cloudflare.com:3478" autocomplete="off">
-    </label>
-    <details>
-      <summary>Advanced: manual signaling without a server</summary>
-      <div class="row">
-        <button id="create-offer">Create offer &amp; download PEER.json</button>
-        <label class="file-button">Upload PEER.json (offer or answer)
-          <input id="signal-file" type="file" accept="application/json,.json">
-        </label>
-      </div>
-      <ol class="hint">
-        <li>Peer A clicks <em>Create offer</em> and sends the downloaded PEER.json to peer B (chat, email, USB stick, …).</li>
-        <li>Peer B uploads that file — an answer PEER.json is downloaded automatically — and sends it back to A.</li>
-        <li>Peer A uploads the answer file. The data channel opens and the chat state starts syncing.</li>
-      </ol>
-    </details>
-    <ul id="connections"></ul>
-  </section>
-
-  <section>
-    <h2>3. Chat</h2>
-    <p id="members" class="hint"></p>
-    <div id="messages"></div>
-    <form id="chat-form">
-      <input id="message-input" type="text" placeholder="Join a room to chat…" autocomplete="off" disabled>
-      <button type="submit" disabled>Send</button>
-    </form>
-  </section>
-
-  <section>
-    <h2>4. Save / restore state</h2>
-    <div class="row">
-      <button id="save-state">Save state</button>
-      <label class="file-button">Restore state
-        <input id="state-file" type="file" accept="application/json,.json">
-      </label>
-    </div>
-    <p class="hint">
-      <em>Save state</em> downloads your identity plus the full CRDT chat history as JSON.
-      Uploading such a file via <em>Restore state</em> impersonates that peer: you continue
-      with their peer id, nickname and exact chat state.
+<main class="container stack py-8">
+  <header class="stack gap-2">
+    <h1 class="h2">defuss-webrtc P2P chat</h1>
+    <p class="muted">
+      P2P chat demo: peers find each other through a tiny room signaling server
+      (offers/answers over HTTP), then chat over direct WebRTC data channels with
+      schema-aware CRDT state sync. The server only brokers signaling — no chat
+      traffic ever passes through it. A manual file-based flow (fully serverless)
+      is available under "Advanced".
     </p>
+  </header>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">1. Your identity</h2>
+      <p id="identity-status" class="card-description"></p>
+    </div>
+    <div class="card-content">
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="form-field flex-1">
+          <label class="label" for="nickname">Nickname</label>
+          <input class="input" id="nickname" type="text" placeholder="e.g. Alice" autocomplete="off">
+        </div>
+        <button class="btn" data-variant="default" id="set-nickname">Set nickname</button>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>Log</h2>
-    <pre id="log"></pre>
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">2. Join a room</h2>
+      <p id="room-status" class="card-description">Create a room or join an existing one.</p>
+    </div>
+    <div class="card-content stack">
+      <div class="flex flex-wrap gap-3">
+        <div class="form-field flex-1">
+          <label class="label" for="server-url">Signal server URL</label>
+          <input class="input" id="server-url" type="text" value="http://localhost:8787" autocomplete="off">
+        </div>
+        <div class="form-field flex-1">
+          <label class="label" for="server-password">Server password <span class="label-hint">(optional)</span></label>
+          <input class="input" id="server-password" type="password" placeholder="Only if the server requires one" autocomplete="off">
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <div class="form-field flex-1">
+          <label class="label" for="room-name">Room name</label>
+          <input class="input" id="room-name" type="text" placeholder="e.g. lobby" autocomplete="off">
+        </div>
+        <div class="form-field flex-1">
+          <label class="label" for="room-password">Room password <span class="label-hint">(optional)</span></label>
+          <input class="input" id="room-password" type="password" placeholder="Protects a new room / unlocks a protected one" autocomplete="off">
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn" data-variant="default" id="create-room">Create room</button>
+        <button class="btn" data-variant="secondary" id="join-room">Join room</button>
+        <button class="btn" data-variant="outline" id="leave-room" disabled>Leave room</button>
+      </div>
+
+      <div class="stack gap-2">
+        <h3 class="small">Rooms on this server</h3>
+        <ul id="rooms" class="item-list"></ul>
+      </div>
+
+      <div class="form-field">
+        <label class="label" for="stun-servers">STUN server(s)</label>
+        <input class="input" id="stun-servers" type="text" value="stun:stun.cloudflare.com:3478" autocomplete="off" aria-describedby="stun-desc">
+        <p class="field-description" id="stun-desc">Comma separated — empty means host candidates only (same machine/LAN).</p>
+      </div>
+
+      <div class="stack gap-2">
+        <h3 class="small">Connections</h3>
+        <ul id="connections" class="item-list"></ul>
+      </div>
+
+      <details class="collapsible">
+        <summary class="collapsible-trigger">
+          <span>Advanced: manual signaling without a server</span>
+          <svg class="collapsible-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </summary>
+        <div class="collapsible-content stack">
+          <div class="flex flex-wrap items-end gap-3">
+            <button class="btn" data-variant="outline" id="create-offer">Create offer &amp; download PEER.json</button>
+            <div class="form-field flex-1">
+              <label class="label" for="signal-file">Upload PEER.json (offer or answer)</label>
+              <input class="file-input" id="signal-file" type="file" accept="application/json,.json">
+            </div>
+          </div>
+          <ol class="muted steps-list">
+            <li>Peer A clicks <em>Create offer</em> and sends the downloaded PEER.json to peer B (chat, email, USB stick, …).</li>
+            <li>Peer B uploads that file — an answer PEER.json is downloaded automatically — and sends it back to A.</li>
+            <li>Peer A uploads the answer file. The data channel opens and the chat state starts syncing.</li>
+          </ol>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">3. Chat</h2>
+      <p id="members" class="card-description"></p>
+    </div>
+    <div class="card-content stack gap-3">
+      <div id="messages" class="scroll-area" aria-live="polite"></div>
+      <form id="chat-form" class="flex gap-2">
+        <input class="input flex-1" id="message-input" type="text" placeholder="Join a room to chat…" autocomplete="off" aria-label="Message" disabled>
+        <button class="btn" data-variant="default" type="submit" disabled>Send</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">4. Save / restore state</h2>
+      <p class="card-description">
+        <em>Save state</em> downloads your identity plus the full CRDT chat history as JSON.
+        Uploading such a file via <em>Restore state</em> impersonates that peer: you continue
+        with their peer id, nickname and exact chat state.
+      </p>
+    </div>
+    <div class="card-content">
+      <div class="flex flex-wrap items-end gap-3">
+        <button class="btn" data-variant="default" id="save-state">Save state</button>
+        <div class="form-field flex-1">
+          <label class="label" for="state-file">Restore state</label>
+          <input class="file-input" id="state-file" type="file" accept="application/json,.json">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header">
+      <h2 class="card-title">Log</h2>
+    </div>
+    <div class="card-content">
+      <pre id="log" class="scroll-area"></pre>
+    </div>
   </section>
 </main>
+<script type="module" src="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/all.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

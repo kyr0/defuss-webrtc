@@ -23,11 +23,34 @@ around `defuss-webrtc`'s `SignalBundle` format
 - HTTP/1.1+, JSON request and response bodies (`Content-Type: application/json`).
 - Base path: `/v1`.
 - CORS: servers SHOULD allow any origin (`Access-Control-Allow-Origin: *`),
-  allow the `Content-Type` header, allow `GET, POST, OPTIONS`, and answer
-  `OPTIONS` preflights with `204`.
+  allow the `Content-Type`, `X-Server-Password` and `X-Room-Password`
+  headers, allow `GET, POST, OPTIONS`, and answer `OPTIONS` preflights with
+  `204`.
 - Servers SHOULD reject JSON bodies larger than 256 KB with `413`.
 - A room name **MUST** match `^[a-zA-Z0-9_-]{1,64}$`. Room names in URLs are
   percent-encoded by clients.
+
+### 2.1 Passwords (optional)
+
+Both passwords are optional and independent:
+
+- **Server password** — configured by the operator (reference implementation:
+  `SERVER_PASSWORD` env var). When configured, every `/v1` request **MUST**
+  carry it in `X-Server-Password`, otherwise the server answers
+  `401 BAD_SERVER_PASSWORD`. `OPTIONS` preflights are exempt.
+- **Room password** — set by the room creator via `password` in §4.2. When a
+  room has one, every request to `/v1/rooms/{name}/*` (§4.3–§4.7) **MUST**
+  carry it in `X-Room-Password`, otherwise `401 BAD_ROOM_PASSWORD`. Open rooms
+  **MUST** ignore the header. `GET /v1/rooms` is not room-gated; it only
+  reveals whether a room is protected (§3.5).
+
+Header values are the password as percent-encoded UTF-8
+(`encodeURIComponent`), since HTTP header values must be ASCII. A value that
+fails to decode counts as absent. Passwords are 1..256 chars; an empty string
+means "no password".
+
+Servers **MUST NOT** store room passwords in plaintext (the reference uses a
+salted HMAC-SHA256) and **MUST** compare secrets in constant time.
 
 ## 3. Data model
 
@@ -91,6 +114,7 @@ Returned by room-creating, join and member-list endpoints:
 {
   "name": "lobby",
   "createdAt": 1790547398643,
+  "protected": false,
   "members": [ /* Member[], sorted by joinedAt ascending */ ],
   "offers": [ /* SignalOffer[] */ ],
   "answers": [ /* SignalAnswer[] */ ]
@@ -100,8 +124,10 @@ Returned by room-creating, join and member-list endpoints:
 ### 3.5 RoomSummary
 
 ```json
-{ "name": "lobby", "memberCount": 3, "createdAt": 1790547398643 }
+{ "name": "lobby", "memberCount": 3, "createdAt": 1790547398643, "protected": false }
 ```
+
+`protected` is `true` when the room requires a room password (§2.1).
 
 ## 4. Endpoints
 
@@ -113,13 +139,17 @@ Response `200`: `RoomSummary[]`, sorted by `createdAt` ascending.
 
 ### 4.2 `POST /v1/rooms/{name}` — create room
 
-Body: `{ "peerId": "...", "nickname": "..." }`.
+Body: `{ "peerId": "...", "nickname": "...", "password": "optional" }`.
 
 - Creates the room and the caller as its first member with
   `role: "moderator"`.
+- A non-empty `password` makes the room protected (§2.1). It cannot be changed
+  later; the room lives until it is empty.
+- All input is validated before the room is created (no half-created rooms).
 - `201` → `RoomState`.
 - `409 ROOM_EXISTS` if the room already exists.
-- `400 BAD_ROOM_NAME` / `400 BAD_ID` / `400 BAD_NICKNAME` on invalid input.
+- `400 BAD_ROOM_NAME` / `400 BAD_ID` / `400 BAD_NICKNAME` /
+  `400 BAD_PASSWORD` on invalid input.
 
 ### 4.3 `POST /v1/rooms/{name}/join` — join room
 
@@ -137,7 +167,8 @@ Body:
   pair with (normally: all of them; see §6.2). `offers` **MAY** be empty.
 - Validation is atomic: if any offer is invalid, the member **MUST NOT** be
   added. Per offer: `to` **MUST** be an existing member, `to != peerId`, and
-  the bundle checks of §3.3 apply.
+  the bundle checks of §3.3 apply. `bundle.sessionId` **MUST NOT** collide with
+  a stored offer or another offer in the same request (`400 BAD_OFFERS`).
 - `200` → `RoomState` after the join.
 - `404 ROOM_NOT_FOUND`, `409 ALREADY_JOINED`, `400 BAD_OFFERS`,
   `400 BAD_BUNDLE`.
@@ -195,9 +226,14 @@ Body: `{ "peerId": "..." }`.
 { "error": "MACHINE_READABLE_CODE", "message": "human readable detail" }
 ```
 
+Clients **MUST** branch on `error`, never on `message`. The two bundled
+implementations (`server/`, `vercel/`) nevertheless emit identical messages for
+identical requests.
+
 | Status | Codes |
 | --- | --- |
-| 400 | `BAD_ROOM_NAME`, `BAD_ID`, `BAD_NICKNAME`, `BAD_OFFERS`, `BAD_OFFER`, `BAD_BUNDLE`, `ANSWER_MISMATCH`, `BAD_REQUEST` (malformed JSON body) |
+| 400 | `BAD_ROOM_NAME`, `BAD_ID`, `BAD_NICKNAME`, `BAD_PASSWORD`, `BAD_OFFERS`, `BAD_OFFER`, `BAD_BUNDLE`, `ANSWER_MISMATCH`, `BAD_REQUEST` (malformed JSON body) |
+| 401 | `BAD_SERVER_PASSWORD` (missing/wrong server password), `BAD_ROOM_PASSWORD` (missing/wrong room password) |
 | 404 | `NOT_FOUND` (unknown route), `ROOM_NOT_FOUND`, `NOT_A_MEMBER`, `OFFER_NOT_FOUND` |
 | 409 | `ROOM_EXISTS`, `ALREADY_JOINED`, `OFFER_EXISTS` |
 | 413 | body too large |
@@ -271,6 +307,9 @@ close): the member is dropped by TTL (§7).
 
 ### Serverless (e.g. Vercel Functions)
 
+A ready-made Vercel Functions + Upstash Redis implementation lives in
+[`../vercel`](../vercel/README.md); it conforms to this spec, including §2.1.
+
 The reference implementation (`src/store.ts`) keeps state in process memory,
 which does not work for stateless function invocations. Port by keeping the
 endpoint handlers as-is and backing the store with a shared external state:
@@ -283,11 +322,17 @@ endpoint handlers as-is and backing the store with a shared external state:
   per member plus lazy sweeping on reads, instead of a periodic sweeper.
 - Deploy the functions in a single region against a single store to avoid
   write-write races across replicas.
+- Persist the room password hash inside the room document and verify it inside
+  the same atomic read-modify-write as the operation it guards (§2.1); never
+  return it to clients.
 
 ### Security
 
-The protocol carries no authentication or authorization: anyone can create,
-join, read, answer or leave any room, and `peerId` is self-asserted (clients
-may impersonate any identity). This is acceptable for demos and trusted game
-groups. Hardening options: per-room join tokens, HMAC-signed `peerId`s, rate
-limits, and TLS (which any production deployment should terminate anyway).
+The optional passwords (§2.1) gate *who* may use a server or a room, but
+there is no per-member authentication: anyone holding a room's password can
+read, answer or leave on behalf of any member, and `peerId` is self-asserted
+(clients may impersonate any identity). Passwords travel in headers on every
+request, so **deployments using them MUST terminate TLS**. Password checks are
+online-guessable; add rate limiting (per IP and per room) in front of any
+public deployment. Further hardening: per-member session tokens and
+HMAC-signed `peerId`s.

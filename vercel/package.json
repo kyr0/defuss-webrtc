@@ -1,0 +1,22 @@
+{
+  "name": "defuss-webrtc-vercel-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vercel Functions implementation of the defuss-webrtc room signaling protocol.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@upstash/redis": "^1.38.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.3"
+  }
+}
