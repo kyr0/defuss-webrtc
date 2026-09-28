@@ -1,7 +1,7 @@
 {
   "name": "defuss-webrtc",
   "version": "0.1.0",
-  "description": "Serverless manual-signaling WebRTC data channels plus schema-aware CRDT state synchronization for defuss.",
+  "description": "WebRTC data channels with out-of-band or server-based signaling, plus schema-aware CRDT state synchronization for defuss.",
   "type": "module",
   "license": "MIT",
   "author": "Aron Homberg <info@aron-homberg.de>",
@@ -17,6 +17,7 @@
     "ice",
     "p2p",
     "datachannel",
+    "signaling",
     "crdt",
     "offline-first",
     "local-first"
