@@ -5,36 +5,38 @@ offer/answer exchange, then all peers in a room connect to each other directly
 (full mesh) and sync the chat state conflict-free via CRDTs over the data
 channels. The server never sees chat traffic.
 
-This folder is **self-contained**: the built library is vendored into
-`docs/dist/`, so the folder can be served directly as a site root — including
-as a GitHub Pages site ("Deploy from branch" → `/docs`). After rebuilding the
-library with `npm run build`, refresh the vendored copy:
+Live: **https://kyr0.github.io/defuss-webrtc/** — it uses the hosted signaling
+server `https://defuss-webrtc.vercel.app` by default.
 
-```bash
-cp -R dist docs/dist
-```
+The page imports the library from `./dist/`. `docs/dist/` is not committed:
+the Pages workflow (`.github/workflows/pages.yml`) builds the library and
+publishes `docs/` together with a fresh `dist/` on every push to `main`
+(Settings → Pages → Source: "GitHub Actions").
 
 The UI is built with [defuss-shadcn](https://github.com/kyr0/defuss-shadcn)
 (plain HTML + design tokens, no build step), loaded from jsDelivr pinned to
 `@0.9.1`. It follows the OS light/dark preference. `style.css` only holds the
 page-specific layout (chat bubbles, lists, log) and uses the shadcn tokens.
 
-## Run it
+## Run it locally
 
-Start the signaling server (see `server/README.md` for the API):
-
-```bash
-cd server && npm install && npm run dev   # http://localhost:8787
-```
-
-Serve this folder (ES modules don't load from `file://`):
+Build the library next to the page, then serve this folder (ES modules don't
+load from `file://`):
 
 ```bash
+npm run build && cp -R dist docs/dist
 npx serve docs          # or: python3 -m http.server 8000 --directory docs
 ```
 
 Open `http://localhost:8000/` in two tabs, browsers or devices — every tab is
 its own peer (identity lives in `sessionStorage`).
+
+The signal server URL defaults to the hosted `https://defuss-webrtc.vercel.app`.
+To use your own, start one (see `server/README.md`) and enter its URL:
+
+```bash
+cd server && npm install && npm run dev   # then use http://localhost:8787
+```
 
 ## Usage
 
