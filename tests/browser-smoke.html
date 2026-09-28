@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>RUNNING</title>
+<pre id="out">RUNNING</pre>
+<script type="module">
+import { ManualPeer } from "../dist/webrtc/index.js";
+import { createCrdtDocument, defineSchema, counter, register } from "../dist/crdt/index.js";
+
+const out = document.querySelector("#out");
+const done = (text) => { document.title = text; out.textContent = text; };
+
+try {
+  const a = new ManualPeer({ peerId: "browser-a", iceServers: [], iceGatheringTimeoutMs: 4000 });
+  const b = new ManualPeer({ peerId: "browser-b", iceServers: [], iceGatheringTimeoutMs: 4000 });
+  const offer = await a.createOffer();
+  const answer = await b.acceptOffer(offer);
+  await a.acceptAnswer(answer);
+  const [ca, cb] = await Promise.all([a.waitForOpen(5000), b.waitForOpen(5000)]);
+
+  const schema = defineSchema({ count: counter(), title: register("") });
+  const da = createCrdtDocument({ id: "browser-smoke", actorId: "browser-a", schema });
+  const db = createCrdtDocument({ id: "browser-smoke", actorId: "browser-b", schema });
+  da.attach(ca);
+  db.attach(cb);
+  da.increment(["count"], 2);
+  db.increment(["count"], 3);
+  da.set(["title"], "connected");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  if (da.state.count !== 5 || db.state.count !== 5 || db.state.title !== "connected") {
+    throw new Error(`CRDT mismatch: ${JSON.stringify({ a: da.state, b: db.state })}`);
+  }
+  a.close(); b.close();
+  done("PASS");
+} catch (error) {
+  done(`FAIL: ${error?.stack ?? error}`);
+}
+</script>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>defuss-webrtc — P2P chat example</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>defuss-webrtc P2P chat</h1>
+  <p class="hint">
+    P2P chat demo: peers find each other through a tiny room signaling server
+    (offers/answers over HTTP), then chat over direct WebRTC data channels with
+    schema-aware CRDT state sync. The server only brokers signaling — no chat
+    traffic ever passes through it. A manual file-based flow (fully serverless)
+    is available under "Advanced".
+  </p>
+
+  <section>
+    <h2>1. Your identity</h2>
+    <div class="row">
+      <label>Nickname
+        <input id="nickname" type="text" placeholder="e.g. Alice" autocomplete="off">
+      </label>
+      <button id="set-nickname">Set nickname</button>
+    </div>
+    <p id="identity-status" class="hint"></p>
+  </section>
+
+  <section>
+    <h2>2. Join a room</h2>
+    <div class="row">
+      <label>Signal server URL
+        <input id="server-url" type="text" value="http://localhost:8787" autocomplete="off">
+      </label>
+      <label>Room name
+        <input id="room-name" type="text" placeholder="e.g. lobby" autocomplete="off">
+      </label>
+    </div>
+    <div class="row">
+      <button id="create-room">Create room</button>
+      <button id="join-room">Join room</button>
+      <button id="leave-room" disabled>Leave room</button>
+    </div>
+    <p id="room-status" class="hint"></p>
+    <ul id="rooms"></ul>
+    <label>STUN server(s), comma separated — empty means host candidates only (same machine/LAN)
+      <input id="stun-servers" type="text" value="stun:stun.cloudflare.com:3478" autocomplete="off">
+    </label>
+    <details>
+      <summary>Advanced: manual signaling without a server</summary>
+      <div class="row">
+        <button id="create-offer">Create offer &amp; download PEER.json</button>
+        <label class="file-button">Upload PEER.json (offer or answer)
+          <input id="signal-file" type="file" accept="application/json,.json">
+        </label>
+      </div>
+      <ol class="hint">
+        <li>Peer A clicks <em>Create offer</em> and sends the downloaded PEER.json to peer B (chat, email, USB stick, …).</li>
+        <li>Peer B uploads that file — an answer PEER.json is downloaded automatically — and sends it back to A.</li>
+        <li>Peer A uploads the answer file. The data channel opens and the chat state starts syncing.</li>
+      </ol>
+    </details>
+    <ul id="connections"></ul>
+  </section>
+
+  <section>
+    <h2>3. Chat</h2>
+    <p id="members" class="hint"></p>
+    <div id="messages"></div>
+    <form id="chat-form">
+      <input id="message-input" type="text" placeholder="Join a room to chat…" autocomplete="off" disabled>
+      <button type="submit" disabled>Send</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>4. Save / restore state</h2>
+    <div class="row">
+      <button id="save-state">Save state</button>
+      <label class="file-button">Restore state
+        <input id="state-file" type="file" accept="application/json,.json">
+      </label>
+    </div>
+    <p class="hint">
+      <em>Save state</em> downloads your identity plus the full CRDT chat history as JSON.
+      Uploading such a file via <em>Restore state</em> impersonates that peer: you continue
+      with their peer id, nickname and exact chat state.
+    </p>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

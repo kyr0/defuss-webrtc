@@ -1,0 +1,61 @@
+{
+  "name": "defuss-webrtc",
+  "version": "0.1.0",
+  "description": "Serverless manual-signaling WebRTC data channels plus schema-aware CRDT state synchronization for defuss.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Aron Homberg <info@aron-homberg.de>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyr0/defuss.git",
+    "directory": "packages/webrtc"
+  },
+  "keywords": [
+    "defuss",
+    "webrtc",
+    "stun",
+    "ice",
+    "p2p",
+    "datachannel",
+    "crdt",
+    "offline-first",
+    "local-first"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./webrtc": {
+      "types": "./dist/webrtc/index.d.ts",
+      "default": "./dist/webrtc/index.js"
+    },
+    "./crdt": {
+      "types": "./dist/crdt/index.d.ts",
+      "default": "./dist/crdt/index.js"
+    }
+  },
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md",
+    "ARCH.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "rm -rf ./dist",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test tests/*.test.mjs",
+    "check": "rm -rf ./dist && tsc -p tsconfig.json && node --test tests/*.test.mjs",
+    "prepublishOnly": "tsc -p tsconfig.json && node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
