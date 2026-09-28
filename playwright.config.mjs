@@ -3,11 +3,19 @@ import { DOCS_PORT, REMOTE, SERVER_PASSWORD, SIGNAL_PORT } from "./e2e/browser/e
 
 // Browser tests: several real Chromium peers load docs/index.html and chat over
 // WebRTC, signaling through the local Express server or E2E_BASE_URL.
+//
+// Every peer tab polls the signaling server about once per second, so against a
+// deployment (billed per request/invocation) only the @remote smoke tests run, on
+// one worker, stopping at the first failure. E2E_REMOTE_ALL=1 runs everything.
+const REMOTE_SMOKE_ONLY = Boolean(REMOTE) && !process.env.E2E_REMOTE_ALL;
+
 export default defineConfig({
   testDir: "e2e/browser",
   timeout: 120_000,
-  expect: { timeout: 30_000 },
-  workers: 2,
+  expect: { timeout: REMOTE ? 20_000 : 30_000 },
+  workers: REMOTE ? 1 : 2,
+  maxFailures: REMOTE ? 1 : 0,
+  grep: REMOTE_SMOKE_ONLY ? /@remote/ : undefined,
   reporter: [["list"]],
   use: {
     // Full headless Chromium. Chromium hides host IPs behind mDNS ".local" names

@@ -41,11 +41,11 @@ if not ok then return 0 end
 if tostring(current.revision) == expected then return 1 else return 0 end
 `;
 
-// Reads MUST go to the primary. Upstash may serve plain reads (GET, ZRANGE, EVAL_RO)
-// from a replica unless the client holds a sync token from its own recent writes —
-// and a fresh Function instance holds none. Stale reads made concurrent peers see
-// freshly created rooms as missing, and let a stale "room not found" pass the
-// isCurrent() linearization check. A (non-RO) EVAL always executes on the primary.
+// Reads go to the primary (defensive). Upstash guarantees read-your-writes only per
+// client via a sync token from that client's own writes, and a fresh Function
+// instance holds none — so a plain read (GET, ZRANGE, EVAL_RO) served by a lagging
+// replica could make a fresh room look missing, or let a stale "room not found" pass
+// the isCurrent() linearization check. A (non-RO) EVAL always executes on the primary.
 const GET_LUA = `return redis.call("GET", KEYS[1])`;
 const LIST_LUA = `return redis.call("ZRANGE", KEYS[1], 0, -1)`;
 

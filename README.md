@@ -313,6 +313,8 @@ E2E_BASE_URL=https://defuss-webrtc.vercel.app npm run test:browser   # a deploye
 
 The docs app is served from `docs/` with `/dist/` mapped to a fresh library build, so the tests always run the current source. `E2E_SERVER_PASSWORD` works as for the HTTP suite; `E2E_DOCS_PORT` / `E2E_SIGNAL_PORT` override the local ports (47173 / 47787). Chromium runs with mDNS host-candidate obfuscation disabled — `.local` candidates do not resolve on many CI/sandboxed hosts, so peers would never connect. The page loads defuss-shadcn from jsDelivr, so the tests need internet access. On failure, each peer's in-app log is attached to the report.
 
+**Against a deployment, requests cost money.** Every open peer tab polls the signaling server about once per second, so with `E2E_BASE_URL` only the two `@remote` smoke tests run (mesh chat and protected room, roughly 50–60 requests), on one worker, stopping at the first failure; waits abort as soon as a peer logs a signaling failure instead of polling until the timeout. `E2E_REMOTE_ALL=1` runs the whole suite remotely. Each run prints the number of signaling requests it sent. Hunt flakes against the local server, never with `--repeat-each` against a deployment.
+
 ## Repository layout
 
 - `src/` — the `defuss-webrtc` package: `ManualPeer` + signal bundles (`defuss-webrtc/webrtc`) and the CRDT layer (`defuss-webrtc/crdt`).

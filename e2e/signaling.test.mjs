@@ -32,6 +32,7 @@ const TIMEOUT_MS = 20_000;
 
 let base;
 let child;
+let requestCount = 0;
 const cleanup = []; // [room, roomPassword, peerId] still to leave
 
 // ---------------------------------------------------------------------------
@@ -92,6 +93,7 @@ after(async () => {
     await call("POST", `/v1/rooms/${room}/leave`, { body: { peerId }, roomPassword }).catch(() => {});
   }
   child?.kill();
+  console.log(`# requests sent: ${requestCount}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -111,6 +113,7 @@ async function call(method, path, { body, roomPassword, serverPassword, rawHeade
   if (roomPassword) headers["x-room-password"] = encodeURIComponent(roomPassword);
   if (body !== undefined) headers["content-type"] = "application/json";
   Object.assign(headers, rawHeaders);
+  requestCount += 1;
   const response = await fetch(base + path, {
     method,
     headers,
@@ -326,7 +329,8 @@ describe("consistency under concurrency", () => {
   test("concurrent joins and polls all see the room, and no join is lost", async () => {
     // Serverless targets spread concurrent requests over fresh instances; every one of
     // them must read the latest room state (no stale replica reads, no lost updates).
-    for (let trial = 1; trial <= 3; trial += 1) {
+    // One trial against a deployment (requests are billed), three locally.
+    for (let trial = 1; trial <= (REMOTE ? 1 : 3); trial += 1) {
       const name = room(`conc${trial}`);
       await createRoom(name, "alice");
       const joiners = ["bob", "carol", "dave"];

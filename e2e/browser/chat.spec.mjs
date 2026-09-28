@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 import { DOCS_URL, REMOTE, SERVER_PASSWORD, SIGNAL_URL } from "./env.mjs";
 
 const RUN = Math.random().toString(36).slice(2, 8);
+let totalSignalRequests = 0;
 let roomCounter = 0;
 const uniqueRoom = (label) => `pw-${RUN}-${label}-${++roomCounter}`;
 
@@ -15,7 +16,38 @@ class Peer {
     this.context = context;
     this.nickname = nickname;
     this.errors = [];
+    this.signalRequests = 0;
+    this.logMark = 0; // log length before the current step; failures are only looked for after it
     page.on("pageerror", (error) => this.errors.push(error.message));
+    context.on("request", (request) => {
+      if (request.url().startsWith(SIGNAL_URL)) this.signalRequests += 1;
+    });
+  }
+
+  /** Starts a new step: later "…failed" log lines abort waits immediately. */
+  async mark() {
+    this.logMark = ((await this.page.locator("#log").textContent()) ?? "").length;
+  }
+
+  /**
+   * Waits until `condition` (evaluated in the page) holds — but fails fast as soon as
+   * the app logs a "…failed" line during this step, instead of letting every peer keep
+   * polling the signaling server until the timeout.
+   */
+  async until(description, condition, arg) {
+    const outcome = await this.page
+      .waitForFunction(
+        ([source, arg, mark]) => {
+          if (new Function("arg", `return (${source})(arg)`)(arg)) return "ok";
+          const failed = document.querySelector("#log").textContent.slice(mark).split("\n").find((line) => /failed/i.test(line));
+          return failed ? `failed: ${failed}` : false;
+        },
+        [condition.toString(), arg, this.logMark],
+        { timeout: 30_000 },
+      )
+      .then((handle) => handle.jsonValue())
+      .catch((error) => `timeout (${error.message.split("\n")[0]})`);
+    if (outcome !== "ok") throw new Error(`${this.nickname}: ${description} — ${outcome}`);
   }
 
   static async open(browser, nickname, { serverPassword = SERVER_PASSWORD } = {}) {
@@ -35,10 +67,15 @@ class Peer {
   }
 
   async create(room, { password = "" } = {}) {
+    await this.mark();
     await this.page.fill("#room-name", room);
     await this.page.fill("#room-password", password);
     await this.page.click("#create-room");
-    await expect(this.page.locator("#room-status")).toContainText(`In room "${room}"`);
+    await this.inRoom(room);
+  }
+
+  async inRoom(room) {
+    await this.until(`enter room ${room}`, (room) => document.querySelector("#room-status").textContent.includes(`In room "${room}"`), room);
   }
 
   async join(room, { password = "" } = {}) {
@@ -48,8 +85,9 @@ class Peer {
   }
 
   async joined(room, options) {
+    await this.mark();
     await this.join(room, options);
-    await expect(this.page.locator("#room-status")).toContainText(`In room "${room}"`);
+    await this.inRoom(room);
   }
 
   async send(text) {
@@ -59,7 +97,11 @@ class Peer {
 
   /** Waits until this peer holds `count` open data channels. */
   async expectOpenChannels(count) {
-    await expect(this.page.locator("#connections li", { hasText: "channel open" })).toHaveCount(count);
+    await this.until(
+      `${count} open channel(s)`,
+      (count) => [...document.querySelectorAll("#connections li")].filter((li) => li.textContent.includes("channel open")).length === count,
+      count,
+    );
   }
 
   messages() {
@@ -87,6 +129,9 @@ async function open(browser, nickname, options) {
 }
 
 test.afterEach(async ({}, testInfo) => {
+  const requests = peers.reduce((sum, peer) => sum + peer.signalRequests, 0);
+  totalSignalRequests += requests;
+  testInfo.annotations.push({ type: "signaling requests", description: String(requests) });
   if (testInfo.status !== testInfo.expectedStatus) {
     // Each peer's in-app log is the most useful failure evidence (signaling, channel events).
     for (const peer of peers) {
@@ -100,11 +145,15 @@ test.afterEach(async ({}, testInfo) => {
   expect(errors, "uncaught page errors").toEqual([]);
 });
 
+test.afterAll(() => {
+  console.log(`signaling requests sent by this worker: ${totalSignalRequests}`);
+});
+
 test.beforeAll(() => {
   console.log(`signaling: ${SIGNAL_URL} (${REMOTE ? "remote" : "local Express"}), server password: ${SERVER_PASSWORD ? "yes" : "no"}`);
 });
 
-test("three peers form a full mesh and every message reaches everyone", async ({ browser }) => {
+test("three peers form a full mesh and every message reaches everyone @remote", async ({ browser }) => {
   const room = uniqueRoom("mesh");
   const [alice, bob, carol] = [await open(browser, "Alice"), await open(browser, "Bob"), await open(browser, "Carol")];
 
@@ -192,7 +241,7 @@ test("a leaving peer drops out of the mesh; the others keep chatting", async ({ 
   await expect(bob.page.locator("#messages .message")).toHaveCount(0); // Bob is no longer in a room
 });
 
-test("a password-protected room only admits peers with the password", async ({ browser }) => {
+test("a password-protected room only admits peers with the password @remote", async ({ browser }) => {
   const room = uniqueRoom("secret");
   const password = "rööm & pässword";
   const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
@@ -208,6 +257,7 @@ test("a password-protected room only admits peers with the password", async ({ b
   await bob.join(room, { password: "wrong" });
   await expect(bob.page.locator("#log")).toContainText(`Join failed: Wrong password for room "${room}"`);
   await expect(bob.page.locator("#message-input")).toBeDisabled();
+  // (joined() starts a new step, so the expected failure above does not trip fail-fast)
 
   await bob.joined(room, { password });
   for (const peer of [alice, bob]) await peer.expectOpenChannels(1);

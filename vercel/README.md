@@ -80,5 +80,10 @@ contains revision `r`. If another request won first, the mutation retries. UUID 
 revision check confirms the snapshot is still current. This makes join validate+write and answer consume+store linearizable per room.
 
 All reads (room documents, revision checks, the room index) are executed as `EVAL` scripts, which Upstash always runs on the
-primary. Plain reads may be served by a replica unless the client holds a sync token from its own writes, which fresh Function
-instances do not — under concurrent load that made newly created rooms appear missing and broke the revision check above.
+primary. This is defensive: Upstash guarantees read-your-writes only per client (via a sync token from its own writes), which
+fresh Function instances do not hold, so a replica-served read could otherwise see a stale room and undermine the revision check.
+
+**Deploy the right directory.** The Vercel project's Root Directory must be `vercel`. If it points at `server/`, Vercel runs the
+Express server instead, whose rooms live in per-instance memory: concurrent requests land on different instances and rooms appear
+and disappear at random. Check with `curl -sI https://<deployment>/v1/rooms` — an `X-Powered-By: Express` header means the wrong
+app is deployed.
