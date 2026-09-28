@@ -54,9 +54,13 @@
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --test tests/*.test.mjs",
     "check": "rm -rf ./dist && tsc -p tsconfig.json && node --test tests/*.test.mjs",
+    "test:e2e": "npm --prefix server run build && node --test 'e2e/*.test.mjs'",
+    "test:e2e:remote": "node --test 'e2e/*.test.mjs'",
+    "test:browser": "playwright test",
     "prepublishOnly": "tsc -p tsconfig.json && node --test tests/*.test.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "typescript": "^5.9.3"
   }
 }

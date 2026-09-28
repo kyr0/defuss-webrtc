@@ -78,3 +78,7 @@ body parsing → unknown room (`404`) → room password (`401`) → body validat
 A stored room is `{ revision, room }`, where `revision` is a fresh UUID for every commit. A mutation reads revision `r`, computes the next state, then Lua commits only if Redis still
 contains revision `r`. If another request won first, the mutation retries. UUID revisions also prevent ABA when a room is deleted and recreated with the same name. State-dependent errors are returned only after a
 revision check confirms the snapshot is still current. This makes join validate+write and answer consume+store linearizable per room.
+
+All reads (room documents, revision checks, the room index) are executed as `EVAL` scripts, which Upstash always runs on the
+primary. Plain reads may be served by a replica unless the client holds a sync token from its own writes, which fresh Function
+instances do not — under concurrent load that made newly created rooms appear missing and broke the revision check above.

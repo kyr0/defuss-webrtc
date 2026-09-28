@@ -282,6 +282,37 @@ npm test
 
 A browser smoke page is included at `tests/browser-smoke.html` for a real same-browser two-peer WebRTC check. It is deliberately separate from the deterministic Node test suite.
 
+### Signaling server end-to-end tests
+
+`e2e/signaling.test.mjs` is one protocol conformance suite (dependency-free, `node:test` + `fetch`) that runs against **any** signaling server over real HTTP. It asserts exact statuses, error codes and messages, so passing on two targets means they behave identically:
+
+```bash
+npm run test:e2e                          # builds and spawns the local Express server (with a server password)
+E2E_SERVER_PASSWORD= npm run test:e2e     # ... as an open server
+
+E2E_BASE_URL=https://defuss-webrtc.vercel.app npm run test:e2e:remote   # any deployment
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `E2E_BASE_URL` | Target origin. Unset: spawn the local Express server from `server/dist`. |
+| `E2E_SERVER_PASSWORD` | The target's server password, if it has one (enables the server-password tests). Locally: the password the spawned server gets; `""` spawns an open server. |
+| `E2E_VERCEL_BYPASS` | "Protection Bypass for Automation" secret, for Vercel deployments behind Deployment Protection. |
+
+Runs use unique room names and leave their rooms afterwards, so they are safe against a shared deployment. Member/signal TTL expiry (90 s / 120 s) is covered by the unit tests, not here. One known platform difference: Vercel's edge rejects malformed percent-encoding in the URL path itself (plain-text `400`) before the function runs; the suite accepts that and reports it as a diagnostic.
+
+### Browser tests (Playwright)
+
+`e2e/browser/chat.spec.mjs` drives the real chat app (`docs/index.html`) in several isolated Chromium contexts — one per peer, each with its own identity — connects them through a signaling server and chats over genuine WebRTC data channels: three-peer full mesh with message fan-out, concurrent sends converging to one order, history sync for late joiners, leaving, password-protected rooms and wrong server passwords.
+
+```bash
+npx playwright install chromium        # once, if the browser is not installed yet
+npm run test:browser                   # local Express server (with a server password) + docs app
+E2E_BASE_URL=https://defuss-webrtc.vercel.app npm run test:browser   # a deployed server
+```
+
+The docs app is served from `docs/` with `/dist/` mapped to a fresh library build, so the tests always run the current source. `E2E_SERVER_PASSWORD` works as for the HTTP suite; `E2E_DOCS_PORT` / `E2E_SIGNAL_PORT` override the local ports (47173 / 47787). Chromium runs with mDNS host-candidate obfuscation disabled — `.local` candidates do not resolve on many CI/sandboxed hosts, so peers would never connect. The page loads defuss-shadcn from jsDelivr, so the tests need internet access. On failure, each peer's in-app log is attached to the report.
+
 ## Repository layout
 
 - `src/` — the `defuss-webrtc` package: `ManualPeer` + signal bundles (`defuss-webrtc/webrtc`) and the CRDT layer (`defuss-webrtc/crdt`).

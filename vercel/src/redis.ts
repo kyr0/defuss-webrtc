@@ -41,6 +41,14 @@ if not ok then return 0 end
 if tostring(current.revision) == expected then return 1 else return 0 end
 `;
 
+// Reads MUST go to the primary. Upstash may serve plain reads (GET, ZRANGE, EVAL_RO)
+// from a replica unless the client holds a sync token from its own recent writes —
+// and a fresh Function instance holds none. Stale reads made concurrent peers see
+// freshly created rooms as missing, and let a stale "room not found" pass the
+// isCurrent() linearization check. A (non-RO) EVAL always executes on the primary.
+const GET_LUA = `return redis.call("GET", KEYS[1])`;
+const LIST_LUA = `return redis.call("ZRANGE", KEYS[1], 0, -1)`;
+
 function roomKey(name: string): string {
   return `${PREFIX}:room:${name}`;
 }
@@ -59,7 +67,7 @@ export class UpstashRoomBackend implements RoomBackend {
   }
 
   async get(name: string): Promise<StoredRoom | null> {
-    return parseStored(await this.#redis.get(roomKey(name)));
+    return parseStored(await this.#redis.eval(GET_LUA, [roomKey(name)], []));
   }
 
   async compareAndSwap(name: string, expectedRevision: string | null, next: StoredRoom | null): Promise<boolean> {
@@ -78,7 +86,7 @@ export class UpstashRoomBackend implements RoomBackend {
   }
 
   async isCurrent(name: string, expectedRevision: string | null): Promise<boolean> {
-    const result = await this.#redis.evalRo(
+    const result = await this.#redis.eval(
       CURRENT_LUA,
       [roomKey(name)],
       [expectedRevision ?? ""],
@@ -87,8 +95,8 @@ export class UpstashRoomBackend implements RoomBackend {
   }
 
   async listNames(): Promise<string[]> {
-    const names = await this.#redis.zrange(INDEX_KEY, 0, -1);
-    return (names as unknown[]).map(String);
+    const names = await this.#redis.eval(LIST_LUA, [INDEX_KEY], []);
+    return (Array.isArray(names) ? names : []).map(String);
   }
 }
 
