@@ -303,7 +303,7 @@ Runs use unique room names and leave their rooms afterwards, so they are safe ag
 
 ### Browser tests (Playwright)
 
-`e2e/browser/chat.spec.mjs` drives the real chat app (`docs/index.html`) in several isolated Chromium contexts — one per peer, each with its own identity — connects them through a signaling server and chats over genuine WebRTC data channels: three-peer full mesh with message fan-out, concurrent sends converging to one order, history sync for late joiners, leaving, password-protected rooms and wrong server passwords.
+`e2e/browser/chat.spec.mjs` drives the real chat app (`docs/index.html`) in several isolated Chromium contexts — one per peer, each with its own identity — connects them through a signaling server and chats over genuine WebRTC data channels: three-peer full mesh with message fan-out, concurrent sends converging to one order, history sync for late joiners, leaving, password-protected rooms and wrong server passwords — plus reconnection: a dropped link healing after divergent offline writes, a reloaded tab rejoining with the same identity, a peer the server timed out rejoining automatically, and hidden tabs polling slowly.
 
 ```bash
 npx playwright install chromium        # once, if the browser is not installed yet

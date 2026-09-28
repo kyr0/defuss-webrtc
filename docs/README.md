@@ -50,6 +50,29 @@ cd server && npm install && npm run dev   # then use http://localhost:8787
    on another client impersonates that peer: same peer id, nickname and exact
    chat state.
 
+### Reconnection
+
+Peers heal on their own; the CRDT merges whatever both sides wrote while apart
+as soon as a link is back:
+
+- **Lost links** (network drop, sleep, ICE failure) are detected via the data
+  channel and `RTCPeerConnection.connectionState` ("disconnected" gets a short
+  grace period) and re-established; the later joiner of a pair re-offers, with
+  backoff. Unanswered offers are withdrawn and retried.
+- **Offline:** signaling pauses and a badge shows the state; you can keep
+  writing. The `online` event resyncs immediately.
+- **Hidden tabs** poll every 15 s instead of every 2 s (still inside the
+  server's 90 s presence timeout) and resync the moment they are visible again.
+- **Dropped by the server** (e.g. asleep for more than 90 s): the tab rejoins
+  automatically instead of leaving the room.
+- **Reloads** keep the peer id: joining again replaces the stale session the
+  server still lists. Each page load writes as its own CRDT actor
+  (`peerId#<load id>`), so messages written right after a reload never collide
+  with the ones from before it.
+
+Messages are displayed chronologically (by their timestamp, CRDT order breaks
+ties), so text written while offline lands where it belongs in time.
+
 The manual PEER.json file flow (fully serverless, no signal server at all) is
 still available under "Advanced: manual signaling without a server".
 

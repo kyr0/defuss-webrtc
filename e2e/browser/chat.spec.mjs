@@ -53,8 +53,21 @@ class Peer {
   static async open(browser, nickname, { serverPassword = SERVER_PASSWORD } = {}) {
     const context = await browser.newContext();
     const peer = new Peer(await context.newPage(), context, nickname);
-    const { page } = peer;
-    await page.goto(DOCS_URL);
+    peer.serverPassword = serverPassword;
+    await peer.page.goto(DOCS_URL);
+    await peer.configure();
+    return peer;
+  }
+
+  /** Reloads the tab (sessionStorage — and so the peer id — survives) and sets it up again. */
+  async reload() {
+    await this.page.reload();
+    this.logMark = 0;
+    await this.configure();
+  }
+
+  async configure() {
+    const { page, nickname, serverPassword } = this;
     await page.fill("#server-url", SIGNAL_URL);
     await page.locator("#server-url").dispatchEvent("change");
     await page.fill("#server-password", serverPassword);
@@ -63,7 +76,23 @@ class Peer {
     await page.fill("#nickname", nickname);
     await page.click("#set-nickname");
     await expect(page.locator("#log")).toContainText(`Nickname set to "${nickname}"`);
-    return peer;
+  }
+
+  async peerId() {
+    return (await this.page.textContent("#identity-status")).match(/[0-9a-f-]{36}/)[0];
+  }
+
+  /** Emulates the tab being hidden / shown (Page Visibility API). */
+  async setHidden(hidden) {
+    await this.page.evaluate((hidden) => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (hidden ? "hidden" : "visible") });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, hidden);
+  }
+
+  openChannels() {
+    return this.page.locator("#connections li", { hasText: "channel open" });
   }
 
   async create(room, { password = "" } = {}) {
@@ -273,4 +302,105 @@ test("a wrong server password is reported and blocks room actions", async ({ bro
   await eve.page.click("#create-room");
   await expect(eve.page.locator("#log")).toContainText("Create room failed: Wrong server password");
   await expect(eve.page.locator("#message-input")).toBeDisabled();
+});
+
+// ---------------------------------------------------------------------------
+// Reconnection. These waits use plain expect() rather than fail-fast until():
+// "…failed" log lines are expected while a peer is offline or reconnecting.
+// ---------------------------------------------------------------------------
+
+test("a dropped connection heals and diverged chat state converges", async ({ browser }) => {
+  const room = uniqueRoom("heal");
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.create(room);
+  await bob.joined(room);
+  await expect(alice.openChannels()).toHaveCount(1);
+  await expect(bob.openChannels()).toHaveCount(1);
+  await alice.send("while connected");
+  await bob.expectMessages(["while connected"]);
+
+  // Bob loses the network and his link to Alice dies (sleep, Wi-Fi drop, …).
+  await bob.context.setOffline(true);
+  await expect(bob.page.locator("#net-status")).toHaveText(/offline/);
+  await bob.page.evaluate(() => { for (const conn of window.__defuss.connections.values()) conn.peer.close(); });
+  await expect(alice.openChannels()).toHaveCount(0);
+  await expect(bob.openChannels()).toHaveCount(0);
+
+  // Both keep writing while apart: the states diverge.
+  await alice.send("Alice while apart");
+  await bob.send("Bob while apart");
+  await expect(bob.page.locator("#messages .message .text")).toHaveText(["while connected", "Bob while apart"]);
+  await alice.page.waitForTimeout(3000);
+  expect(await alice.messages()).toEqual(["while connected", "Alice while apart"]);
+
+  // Back online: the link is re-established and both converge on one transcript.
+  await bob.context.setOffline(false);
+  await expect(bob.page.locator("#net-status")).toHaveText(/online/);
+  await expect(alice.openChannels()).toHaveCount(1);
+  await expect(bob.openChannels()).toHaveCount(1);
+  await expect.poll(async () => (await alice.messages()).length).toBe(3);
+  const transcript = await alice.messages();
+  await bob.expectMessages(transcript);
+  expect([...transcript].sort()).toEqual(["Alice while apart", "Bob while apart", "while connected"]);
+});
+
+test("a reloaded tab rejoins with the same identity and its new messages are not lost", async ({ browser }) => {
+  const room = uniqueRoom("reload");
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.create(room);
+  await bob.joined(room);
+  await expect(alice.openChannels()).toHaveCount(1);
+  await bob.send("before reload");
+  await alice.expectMessages(["before reload"]);
+  const bobId = await bob.peerId();
+
+  await bob.reload();
+  expect(await bob.peerId()).toBe(bobId); // same identity after the reload
+  await bob.join(room);
+  await expect(bob.page.locator("#room-status")).toContainText(`In room "${room}"`);
+  // Written right away — before the old history has synced back to the fresh page.
+  await bob.send("right after reload");
+
+  await expect(alice.openChannels()).toHaveCount(1); // the dead link was replaced, not duplicated
+  await expect(bob.openChannels()).toHaveCount(1);
+  await alice.expectMessages(["before reload", "right after reload"]);
+  await bob.expectMessages(["before reload", "right after reload"]);
+  await expect(alice.page.locator("#room-status")).toHaveText(`In room "${room}" — Alice (you) ★, Bob`);
+});
+
+test("a peer the server dropped rejoins automatically", async ({ browser }) => {
+  const room = uniqueRoom("dropped");
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.create(room);
+  await bob.joined(room);
+  await expect(alice.openChannels()).toHaveCount(1);
+
+  // Simulate the server timing Bob out (as after >90 s asleep): remove his membership.
+  const headers = { "content-type": "application/json", ...(SERVER_PASSWORD ? { "x-server-password": encodeURIComponent(SERVER_PASSWORD) } : {}) };
+  const response = await fetch(`${SIGNAL_URL}/v1/rooms/${room}/leave`, { method: "POST", headers, body: JSON.stringify({ peerId: await bob.peerId() }) });
+  expect(response.status).toBe(200);
+
+  await expect(bob.page.locator("#log")).toContainText("rejoining");
+  await expect(bob.page.locator("#room-status")).toHaveText(`In room "${room}" — Alice ★, Bob (you)`);
+  await expect(alice.openChannels()).toHaveCount(1);
+  await expect(bob.openChannels()).toHaveCount(1);
+  await bob.send("still here");
+  await alice.expectMessages(["still here"]);
+  await expect(bob.page.locator("#leave-room")).toBeEnabled(); // never left the room
+});
+
+test("a hidden tab polls slowly and resyncs as soon as it is visible again", async ({ browser }) => {
+  const room = uniqueRoom("hidden");
+  const alice = await open(browser, "Alice");
+  await alice.create(room);
+  await alice.page.waitForTimeout(1000);
+
+  await alice.setHidden(true);
+  const hiddenStart = alice.signalRequests;
+  await alice.page.waitForTimeout(8000);
+  expect(alice.signalRequests - hiddenStart, "requests while hidden for 8 s").toBeLessThanOrEqual(1);
+
+  const beforeVisible = alice.signalRequests;
+  await alice.setHidden(false);
+  await expect.poll(() => alice.signalRequests - beforeVisible, { timeout: 1500 }).toBeGreaterThanOrEqual(1);
 });

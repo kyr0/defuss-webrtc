@@ -85,6 +85,7 @@ const leaveRoomButton = $("leave-room");
 const roomStatus = $("room-status");
 const roomsList = $("rooms");
 const connectionsList = $("connections");
+const netStatus = $("net-status");
 const membersEl = $("members");
 const messagesEl = $("messages");
 const chatForm = $("chat-form");
@@ -108,9 +109,8 @@ window.addEventListener("unhandledrejection", (event) => {
 // ---------------------------------------------------------------------------
 // Identity: a stable peer id + nickname, persisted in sessionStorage so it
 // survives reloads but every tab is its own peer (two tabs of the same browser
-// can join the same room). The peer id doubles as the CRDT actor id, which is
-// what makes impersonation possible later: restore a state file and you
-// continue as that actor.
+// can join the same room). Restoring a state file continues as that peer: same
+// peer id, nickname and chat history.
 // ---------------------------------------------------------------------------
 function loadIdentity() {
   try {
@@ -132,6 +132,14 @@ function loadIdentity() {
 let identity = loadIdentity();
 nicknameInput.value = identity.nickname;
 
+// CRDT actor ("writer") id = peer id + a per-page-load suffix. A reloaded page
+// starts a fresh document whose op sequence restarts at 1; with the bare peer id
+// its first ops would reuse (actor, seq) pairs the other peers already hold from
+// before the reload and be dropped as duplicates. Identity, nickname and message
+// ownership keep using the stable peer id.
+const pageLoadId = uuid().slice(0, 8);
+const actorId = () => `${identity.peerId}#${pageLoadId}`;
+
 // ---------------------------------------------------------------------------
 // CRDT documents are per room: the room name is the document id, so state only
 // syncs between peers in the same room. Chat is only possible while in a room.
@@ -152,15 +160,15 @@ function createDoc(actorId, docId) {
 
 function getDoc(name) {
   let doc = docsByRoom.get(name);
-  if (doc && doc.actorId !== identity.peerId) {
+  if (doc && doc.actorId !== actorId()) {
     // Identity changed since (state restore): keep the ops, switch the actor.
-    const next = createDoc(identity.peerId, name);
+    const next = createDoc(actorId(), name);
     next.merge(doc.export());
     doc.close();
     docsByRoom.set(name, next);
     doc = next;
   } else if (!doc) {
-    doc = createDoc(identity.peerId, name);
+    doc = createDoc(actorId(), name);
     docsByRoom.set(name, doc);
   }
   return doc;
@@ -176,9 +184,47 @@ function announceNickname() {
 // Connections: one ManualPeer per remote peer, all attached to the same CRDT
 // document (the document gossips ops between channels, so this forms a mesh).
 // ---------------------------------------------------------------------------
-const connections = new Map(); // sessionId -> { peer, channel, remotePeerId, remoteNickname, detach }
-const pairings = new Set(); // remote peer ids we offered to, answered, or connected with
+const connections = new Map(); // sessionId -> { peer, channel, remotePeerId, remoteNickname, origin, detach, superseded }
+const connecting = new Map(); // sessionId -> ManualPeer whose channel is not open yet
 let pendingOffer = null; // { peer, sessionId } — manual signaling only
+
+// Room links: at most one *current* signaling session per remote peer. A newer
+// session (re-offer, rejoin, reload) supersedes the old one; only the current
+// session's failure frees the slot, so mesh repair pairs with that peer again.
+const links = new Map(); // remotePeerId -> current sessionId
+
+function claimLink(remotePeerId, sessionId) {
+  const previous = links.get(remotePeerId);
+  links.set(remotePeerId, sessionId);
+  if (previous && previous !== sessionId) retireSession(previous);
+}
+
+function releaseLink(remotePeerId, sessionId) {
+  if (links.get(remotePeerId) === sessionId) links.delete(remotePeerId);
+}
+
+/** Closes whatever a superseded session still holds (pending offer, half-open or open connection). */
+function retireSession(sessionId) {
+  const pending = outgoing.get(sessionId);
+  if (pending) {
+    pending.peer.close();
+    outgoing.delete(sessionId);
+  }
+  connecting.get(sessionId)?.close();
+  connecting.delete(sessionId);
+  const conn = connections.get(sessionId);
+  if (conn?.origin === "room") {
+    conn.superseded = true;
+    conn.peer.close();
+  }
+}
+
+// Reconnection tuning.
+const POLL_VISIBLE_MS = 2_000;
+const POLL_HIDDEN_MS = 15_000; // hidden tabs: still well inside the server's 90 s member TTL
+const OFFER_TIMEOUT_MS = 20_000; // unanswered offers are withdrawn and retried
+const RETRY_MAX_MS = 60_000; // re-offer backoff cap per remote peer
+const DISCONNECT_GRACE_MS = 8_000; // ICE "disconnected" often recovers on its own
 
 function iceServers() {
   const urls = stunInput.value.split(",").map((s) => s.trim()).filter(Boolean);
@@ -260,24 +306,59 @@ async function onSignalFile(file) {
 }
 
 async function connectPeer(peer, sessionId, remotePeerId, remoteNickname, origin) {
-  pairings.add(remotePeerId);
+  const label = remoteNickname ?? short(remotePeerId);
+  if (origin === "room") claimLink(remotePeerId, sessionId);
+  connecting.set(sessionId, peer);
+  let channel;
   try {
-    const channel = await peer.waitForOpen(30_000);
-    const conn = { peer, channel, remotePeerId, remoteNickname, origin, detach: null };
-    if (roomDoc) conn.detach = roomDoc.attach(channel);
-    connections.set(sessionId, conn);
-    channel.addEventListener("close", () => {
-      connections.delete(sessionId);
-      log(`Connection to ${remoteNickname ?? short(remotePeerId)} closed.`);
-      renderConnections();
-    });
-    log(`Connected to ${remoteNickname ?? short(remotePeerId)} — ${conn.detach ? "chat state is syncing." : "join a room to start syncing chat."}`);
-    renderConnections();
+    channel = await peer.waitForOpen(30_000);
   } catch (error) {
-    log(`Connection to ${remoteNickname ?? short(remotePeerId)} failed: ${error.message}`);
+    const current = connecting.get(sessionId) === peer;
+    connecting.delete(sessionId);
     peer.close();
+    if (origin === "room") releaseLink(remotePeerId, sessionId);
+    if (current) log(`Connection to ${label} failed: ${error.message}${origin === "room" && room ? " — will retry" : ""}`);
     renderConnections();
+    if (origin === "room") requestSync();
+    return;
   }
+  connecting.delete(sessionId);
+  if (origin === "room" && links.get(remotePeerId) !== sessionId) {
+    peer.close(); // superseded by a newer session while it was opening
+    return;
+  }
+
+  const conn = { peer, channel, remotePeerId, remoteNickname, origin, detach: null, superseded: false };
+  if (roomDoc) conn.detach = roomDoc.attach(channel);
+  connections.set(sessionId, conn);
+
+  let graceTimer;
+  let dropped = false;
+  const drop = (reason) => {
+    if (dropped) return;
+    dropped = true;
+    clearTimeout(graceTimer);
+    conn.detach?.();
+    if (connections.get(sessionId) === conn) connections.delete(sessionId);
+    peer.close();
+    if (origin === "room") releaseLink(remotePeerId, sessionId);
+    if (!conn.superseded) log(`Connection to ${label} lost (${reason})${origin === "room" && room ? " — reconnecting…" : "."}`);
+    renderConnections();
+    if (origin === "room") requestSync();
+  };
+  channel.addEventListener("close", () => drop("channel closed"));
+  peer.connection.addEventListener("connectionstatechange", () => {
+    const state = peer.connection.connectionState;
+    if (state === "failed") drop("connection failed");
+    else if (state === "disconnected") {
+      clearTimeout(graceTimer);
+      graceTimer = setTimeout(() => {
+        if (peer.connection.connectionState !== "connected") drop("no route to peer");
+      }, DISCONNECT_GRACE_MS);
+    } else if (state === "connected") clearTimeout(graceTimer);
+  });
+  log(`Connected to ${label} — ${conn.detach ? "chat state is syncing." : "join a room to start syncing chat."}`);
+  renderConnections();
 }
 
 // ---------------------------------------------------------------------------
@@ -285,11 +366,14 @@ async function connectPeer(peer, sessionId, remotePeerId, remoteNickname, origin
 // them with the join; every member polls and answers the offers addressed to
 // it. Once answers come back, all peers are pairwise connected (full mesh).
 // ---------------------------------------------------------------------------
-let room = null; // { name, password, myJoinedAt, pollTimer }
-const outgoing = new Map(); // offer sessionId -> { peer, toPeerId, toNickname }
-const handledOffers = new Set(); // offer sessionIds we already answered
+let room = null; // { name, password, myJoinedAt, pollTimer, lastPollAt }
+const outgoing = new Map(); // offer sessionId -> { peer, toPeerId, toNickname, createdAt }
+const handledOffers = new Set(); // offer sessionIds we already answered (or skipped as stale)
 const acceptedAnswers = new Set(); // answer sessionIds we already consumed
+const retries = new Map(); // remotePeerId -> { attempts, notBefore } — re-offer backoff
 let lastSyncError = null;
+let syncing = false;
+let syncQueued = false;
 
 // Passwords travel percent-encoded in headers (header values must be ASCII).
 // `roomPassword` is only sent for room endpoints; open rooms ignore it.
@@ -306,13 +390,15 @@ async function roomApi(method, path, body, roomPassword) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    let message = `HTTP ${res.status}`;
+    let payload = {};
     try {
-      message = (await res.json()).message ?? message;
+      payload = await res.json();
     } catch {
       // keep the status-based message
     }
-    throw new Error(message);
+    const error = new Error(payload.message ?? `HTTP ${res.status}`);
+    error.code = payload.error;
+    throw error;
   }
   return res.json();
 }
@@ -327,20 +413,53 @@ function nicknameOf(state, peerId) {
   return state.members.find((member) => member.peerId === peerId)?.nickname ?? short(peerId);
 }
 
+const roomPath = (name) => `/v1/rooms/${encodeURIComponent(name)}`;
+
 async function createOfferFor(toPeerId, toNickname) {
   const peer = new ManualPeer({ peerId: identity.peerId, iceServers: iceServers() });
   const offer = await peer.createOffer({ metadata: { nickname: identity.nickname } });
-  outgoing.set(offer.sessionId, { peer, toPeerId, toNickname });
-  pairings.add(toPeerId);
+  outgoing.set(offer.sessionId, { peer, toPeerId, toNickname, createdAt: Date.now() });
+  claimLink(toPeerId, offer.sessionId);
   renderConnections();
   return offer;
+}
+
+/**
+ * Joins `name` with one fresh offer per member. If the server still lists our
+ * peer id — a previous session of this tab, e.g. before a reload — that stale
+ * membership is ended first, so the join does not fail with ALREADY_JOINED and
+ * the others drop their links to the dead session. If ending it empties the
+ * room, the room is created again (with the same password).
+ * Returns "joined" or "created".
+ */
+async function joinWithOffers(name, password) {
+  let state = await roomApi("GET", `${roomPath(name)}/members`, undefined, password);
+  if (state.members.some((member) => member.peerId === identity.peerId)) {
+    log(`The server still lists a previous session of yours in "${name}" — replacing it…`);
+    await roomApi("POST", `${roomPath(name)}/leave`, { peerId: identity.peerId }, password).catch(() => {});
+    try {
+      state = await roomApi("GET", `${roomPath(name)}/members`, undefined, password);
+    } catch (error) {
+      if (error.code !== "ROOM_NOT_FOUND") throw error;
+      await roomApi("POST", roomPath(name), { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
+      return "created";
+    }
+  }
+  const others = state.members.filter((member) => member.peerId !== identity.peerId);
+  const offers = [];
+  for (const member of others) {
+    offers.push({ to: member.peerId, bundle: await createOfferFor(member.peerId, member.nickname) });
+  }
+  await roomApi("POST", `${roomPath(name)}/join`, { peerId: identity.peerId, nickname: identity.nickname, offers }, password);
+  log(`Joined "${name}" with ${offers.length} offer(s). Waiting for answers…`);
+  return "joined";
 }
 
 async function onCreateRoom() {
   try {
     const name = roomName();
     const password = roomPasswordInput.value;
-    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}`, { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
+    await roomApi("POST", roomPath(name), { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
     log(`Room "${name}" created${password ? " (password protected)" : ""} — you are the moderator. Waiting for peers to join…`);
     enterRoom(name, password);
   } catch (error) {
@@ -353,20 +472,14 @@ async function onJoinRoom() {
   try {
     const name = roomName();
     const password = roomPasswordInput.value;
-    const state = await roomApi("GET", `/v1/rooms/${encodeURIComponent(name)}/members`, undefined, password);
-    const others = state.members.filter((member) => member.peerId !== identity.peerId);
-    log(`Joining "${name}" — creating offers for ${others.length} existing member(s)…`);
-    const offers = [];
-    for (const member of others) {
-      offers.push({ to: member.peerId, bundle: await createOfferFor(member.peerId, member.nickname) });
-    }
-    await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/join`, { peerId: identity.peerId, nickname: identity.nickname, offers }, password);
-    log(`Joined "${name}" with ${offers.length} offer(s). Waiting for answers…`);
+    log(`Joining "${name}"…`);
+    if ((await joinWithOffers(name, password)) === "created") log(`Room "${name}" was empty — created it again; you are the moderator.`);
     enterRoom(name, password);
   } catch (error) {
+    resetRoomSessions();
     log(`Join failed: ${error.message}`);
   } finally {
-    joinRoomButton.disabled = false;
+    joinRoomButton.disabled = room !== null;
   }
 }
 
@@ -376,28 +489,83 @@ function enterRoom(name, password) {
   for (const conn of connections.values()) {
     if (!conn.detach) conn.detach = roomDoc.attach(conn.channel);
   }
-  room = { name, password, myJoinedAt: null, pollTimer: setInterval(syncRoom, 2000) };
+  room = { name, password, myJoinedAt: null, pollTimer: null, lastPollAt: Date.now() };
   announceNickname();
   updateRoomUI();
   renderAll();
-  syncRoom();
+  requestSync();
+}
+
+// ---------------------------------------------------------------------------
+// Polling: a self-scheduling loop instead of a fixed interval — fast while the
+// tab is visible, slow while hidden, paused while the browser is offline, and
+// kicked immediately whenever something needs attention (link lost, back
+// online, tab visible again).
+// ---------------------------------------------------------------------------
+function schedulePoll(delay = document.hidden ? POLL_HIDDEN_MS : POLL_VISIBLE_MS) {
+  if (!room) return;
+  clearTimeout(room.pollTimer);
+  room.pollTimer = setTimeout(pollTick, delay);
+}
+
+function requestSync() {
+  schedulePoll(0);
+}
+
+async function pollTick() {
+  if (!room) return;
+  if (!navigator.onLine) return; // the "online" event restarts the loop
+  const gap = Date.now() - room.lastPollAt;
+  if (gap > 30_000) log(`Resuming after ${Math.round(gap / 1000)} s without contact — resyncing…`);
+  room.lastPollAt = Date.now();
+  await syncRoom();
+  schedulePoll();
 }
 
 async function syncRoom() {
   if (!room) return;
+  if (syncing) {
+    syncQueued = true;
+    return;
+  }
+  syncing = true;
+  try {
+    await syncRoomOnce();
+  } finally {
+    syncing = false;
+    if (syncQueued && room) {
+      syncQueued = false;
+      await syncRoom();
+    }
+  }
+}
+
+async function syncRoomOnce() {
   const { name, password } = room;
-  const path = `/v1/rooms/${encodeURIComponent(name)}`;
+  const path = roomPath(name);
   try {
     const state = await roomApi("GET", `${path}/members?peerId=${encodeURIComponent(identity.peerId)}`, undefined, password);
+    if (lastSyncError) log("Signaling server reachable again.");
     lastSyncError = null;
+    if (!room || room.name !== name) return; // left while the request was in flight
     const me = state.members.find((member) => member.peerId === identity.peerId);
     if (!me) {
-      log(`You are no longer a member of "${name}" (timed out or removed). Leaving.`);
-      onLeaveRoom({ silent: true });
+      await rejoinRoom("The server no longer lists you (timed out or removed)");
       return;
     }
     room.myJoinedAt ??= me.joinedAt;
     renderRoomStatus(state);
+    const now = Date.now();
+
+    // Unanswered offers (the other side is gone or offline) are withdrawn, so
+    // mesh repair can retry with backoff.
+    for (const [sessionId, pending] of [...outgoing]) {
+      if (now - pending.createdAt < OFFER_TIMEOUT_MS) continue;
+      pending.peer.close();
+      outgoing.delete(sessionId);
+      releaseLink(pending.toPeerId, sessionId);
+      log(`No answer from ${pending.toNickname ?? short(pending.toPeerId)} yet — will retry.`);
+    }
 
     // Answers addressed to me: complete my outgoing offers.
     for (const answer of state.answers) {
@@ -411,38 +579,57 @@ async function syncRoom() {
         log(`Answer from ${nicknameOf(state, answer.from)} accepted, opening channel…`);
         connectPeer(pending.peer, answer.sessionId, answer.from, nicknameOf(state, answer.from), "room");
       } catch (error) {
+        releaseLink(answer.from, answer.sessionId);
         log(`Accepting the answer from ${nicknameOf(state, answer.from)} failed: ${error.message}`);
       }
     }
 
-    // Offers addressed to me: answer them and post the answer back.
+    // Offers addressed to me: answer only the newest per sender — older ones
+    // belong to sessions the sender has already given up on.
+    const newest = new Map();
     for (const offer of state.offers) {
       if (offer.to !== identity.peerId || handledOffers.has(offer.sessionId)) continue;
       handledOffers.add(offer.sessionId);
-      pairings.add(offer.from);
+      const seen = newest.get(offer.from);
+      if (!seen || offer.createdAt > seen.createdAt) newest.set(offer.from, offer);
+    }
+    for (const offer of newest.values()) {
       try {
         const peer = new ManualPeer({ peerId: identity.peerId, iceServers: iceServers() });
+        claimLink(offer.from, offer.sessionId); // supersedes any older (dead) link to this peer
+        connecting.set(offer.sessionId, peer);
         const answer = await peer.acceptOffer(offer.bundle, { metadata: { nickname: identity.nickname } });
         await roomApi("POST", `${path}/answers`, { from: identity.peerId, to: offer.from, sessionId: offer.sessionId, bundle: answer }, password);
         log(`Answered the offer from ${nicknameOf(state, offer.from)}, opening channel…`);
         connectPeer(peer, offer.sessionId, offer.from, nicknameOf(state, offer.from), "room");
       } catch (error) {
+        connecting.get(offer.sessionId)?.close();
+        connecting.delete(offer.sessionId);
+        releaseLink(offer.from, offer.sessionId);
         log(`Answering the offer from ${nicknameOf(state, offer.from)} failed: ${error.message}`);
       }
     }
 
-    // Mesh repair: if a member joined before me but we never paired (e.g. we
-    // joined simultaneously), the later joiner (me) sends a late offer.
+    // Mesh repair: for every earlier member we hold no link with (never paired,
+    // or the link died), the later joiner — me — offers. Only one side of a pair
+    // ever offers, so there is no offer glare. Retries back off per peer.
     for (const member of state.members) {
-      if (member.peerId === identity.peerId || pairings.has(member.peerId)) continue;
+      if (member.peerId === identity.peerId || links.has(member.peerId)) continue;
       if (member.joinedAt >= room.myJoinedAt) continue;
+      const retry = retries.get(member.peerId) ?? { attempts: 0, notBefore: 0 };
+      if (now < retry.notBefore) continue;
+      retries.set(member.peerId, { attempts: retry.attempts + 1, notBefore: now + Math.min(RETRY_MAX_MS, 2_500 * 2 ** retry.attempts) });
       try {
         const bundle = await createOfferFor(member.peerId, member.nickname);
         await roomApi("POST", `${path}/offers`, { from: identity.peerId, to: member.peerId, bundle }, password);
-        log(`Sent a late offer to ${member.nickname} (mesh repair)`);
+        log(`Sent ${retry.attempts ? "a new" : "a late"} offer to ${member.nickname} (mesh repair)`);
       } catch (error) {
-        log(`Late offer to ${member.nickname} failed: ${error.message}`);
+        log(`Offer to ${member.nickname} failed: ${error.message}`);
       }
+    }
+    // Healthy links reset their backoff.
+    for (const conn of connections.values()) {
+      if (conn.origin === "room" && conn.channel.readyState === "open") retries.delete(conn.remotePeerId);
     }
     renderConnections();
   } catch (error) {
@@ -451,26 +638,19 @@ async function syncRoom() {
   }
 }
 
-async function onLeaveRoom({ silent = false } = {}) {
-  if (!room) return;
-  const { name, password, pollTimer } = room;
-  clearInterval(pollTimer);
-  room = null;
-  roomDoc = null; // stays cached in docsByRoom; history is kept locally
-  if (!silent) {
-    try {
-      await roomApi("POST", `/v1/rooms/${encodeURIComponent(name)}/leave`, { peerId: identity.peerId }, password);
-    } catch (error) {
-      log(`Leave request failed: ${error.message}`);
-    }
-  }
+/** Closes all room signaling sessions (manual connections survive). */
+function resetRoomSessions() {
   for (const { peer } of outgoing.values()) peer.close();
   outgoing.clear();
+  for (const peer of connecting.values()) peer.close();
+  connecting.clear();
   handledOffers.clear();
   acceptedAnswers.clear();
-  pairings.clear();
+  retries.clear();
+  links.clear();
   for (const [sessionId, conn] of [...connections]) {
     if (conn.origin === "room") {
+      conn.superseded = true; // closed on purpose: no "lost" log, no repair
       conn.peer.close();
       connections.delete(sessionId);
     } else {
@@ -479,9 +659,50 @@ async function onLeaveRoom({ silent = false } = {}) {
       conn.detach = null;
     }
   }
+}
+
+/** The server dropped us (e.g. >90 s asleep or offline): join again instead of leaving. */
+async function rejoinRoom(reason) {
+  const { name, password } = room;
+  log(`${reason} — rejoining "${name}"…`);
+  resetRoomSessions();
+  room.myJoinedAt = null;
+  try {
+    const outcome = await joinWithOffers(name, password);
+    if (outcome === "created") log(`Room "${name}" no longer existed — created it again; you are the moderator.`);
+    renderConnections();
+  } catch (error) {
+    if (error.code === "ROOM_NOT_FOUND") {
+      try {
+        await roomApi("POST", roomPath(name), { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
+        log(`Room "${name}" no longer existed — created it again; you are the moderator.`);
+        return;
+      } catch (createError) {
+        error = createError;
+      }
+    }
+    log(`Rejoin failed: ${error.message} — will retry.`);
+  }
+}
+
+async function onLeaveRoom({ silent = false } = {}) {
+  if (!room) return;
+  const { name, password, pollTimer } = room;
+  clearTimeout(pollTimer);
+  room = null;
+  roomDoc = null; // stays cached in docsByRoom; history is kept locally
+  if (!silent) {
+    try {
+      await roomApi("POST", `${roomPath(name)}/leave`, { peerId: identity.peerId }, password);
+    } catch (error) {
+      log(`Leave request failed: ${error.message}`);
+    }
+  }
+  resetRoomSessions();
   roomStatus.textContent = "Create a room or join an existing one.";
   updateRoomUI();
   renderAll();
+  refreshRooms();
   log(`Left room "${name}". Chat history is kept locally.`);
 }
 
@@ -495,9 +716,18 @@ function updateRoomUI() {
   joinRoomButton.disabled = inRoom;
   leaveRoomButton.disabled = !inRoom;
   messageInput.disabled = !inRoom;
-  messageInput.placeholder = inRoom ? "Type a message…" : "Join a room to chat…";
+  messageInput.placeholder = !inRoom
+    ? "Join a room to chat…"
+    : navigator.onLine ? "Type a message…" : "Offline — messages sync when you reconnect";
   sendButton.disabled = !inRoom;
   saveStateButton.disabled = !inRoom;
+}
+
+function renderNetStatus() {
+  const online = navigator.onLine;
+  netStatus.textContent = online ? "online" : "offline";
+  netStatus.dataset.variant = online ? "secondary" : "outline";
+  netStatus.title = online ? "" : "You can keep writing — messages sync when you reconnect.";
 }
 
 function renderRoomStatus(state) {
@@ -622,7 +852,7 @@ async function onRestoreState(file) {
     // Re-create the room's document under the impersonated actor id and import
     // the exact op-set of the saved peer. If we're in that room right now,
     // re-attach all live channels to the new doc.
-    const next = createDoc(identity.peerId, docId);
+    const next = createDoc(actorId(), docId);
     const imported = next.merge(data.snapshot);
     docsByRoom.get(docId)?.close();
     docsByRoom.set(docId, next);
@@ -642,7 +872,7 @@ async function onRestoreState(file) {
 // Rendering
 // ---------------------------------------------------------------------------
 function renderIdentity() {
-  identityStatus.textContent = `Peer id: ${identity.peerId} (also your CRDT actor id)`;
+  identityStatus.textContent = `Peer id: ${identity.peerId}`;
 }
 
 function renderConnections() {
@@ -687,7 +917,14 @@ function renderMessages() {
     messagesEl.append(hint);
     return;
   }
-  const messages = roomDoc.state.messages;
+  // Displayed chronologically. The CRDT list order records where each writer
+  // believed the end was: a message written before the history synced back (just
+  // after a reload, or while offline) would otherwise sort before older messages.
+  // List order breaks timestamp ties, so every peer renders the same sequence.
+  const messages = roomDoc.state.messages
+    .map((message, index) => ({ message, index, at: Date.parse(message.at) || 0 }))
+    .sort((a, b) => a.at - b.at || a.index - b.index)
+    .map(({ message }) => message);
   for (const message of messages) {
     const row = document.createElement("div");
     row.className = `message${message.from === identity.peerId ? " own" : ""}`;
@@ -745,10 +982,41 @@ stateFileInput.addEventListener("change", () => {
   if (file) onRestoreState(file);
 });
 
+// Connectivity and page lifecycle: resync the moment we are back, poll slowly
+// while hidden, and never poll while the browser knows it is offline.
+window.addEventListener("online", () => {
+  log("Back online — resyncing…");
+  renderNetStatus();
+  updateRoomUI();
+  if (room) requestSync();
+  else refreshRooms();
+});
+window.addEventListener("offline", () => {
+  log("Offline — you can keep writing; messages sync when you reconnect.");
+  renderNetStatus();
+  updateRoomUI();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    schedulePoll(); // re-arm with the slow, hidden cadence
+  } else {
+    if (room) requestSync();
+    else refreshRooms();
+  }
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && room) requestSync(); // restored from the back/forward cache
+});
+
 renderAll();
+renderNetStatus();
 updateRoomUI();
 refreshRooms();
-setInterval(refreshRooms, 5000);
+// The room list is only useful while choosing a room: skip it while in one,
+// while the tab is hidden, and while offline.
+setInterval(() => {
+  if (!room && !document.hidden && navigator.onLine) refreshRooms();
+}, 5000);
 
 // Debug handle for the console/tests.
-window.__defuss = { docsByRoom, connections, get roomDoc() { return roomDoc; }, get room() { return room; } };
+window.__defuss = { docsByRoom, connections, links, get roomDoc() { return roomDoc; }, get room() { return room; } };
