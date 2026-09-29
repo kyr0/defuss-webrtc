@@ -195,3 +195,47 @@ test("schema mismatch is rejected before applying remote operations", async () =
   await tick(10);
   assert.ok(errors.some((error) => error.code === "SCHEMA_MISMATCH" || error.code === "REMOTE_SCHEMA_MISMATCH"));
 });
+
+test("state is a fresh copy, cached until any op changes it, and change.state is the event-time state", () => {
+  const schema = makeSchema();
+  const a = createCrdtDocument({ id: "doc", actorId: "a", schema });
+  const b = createCrdtDocument({ id: "doc", actorId: "b", schema });
+
+  const first = a.state;
+  first.title = "mutated by caller";
+  first.users.ghost = { name: "x", score: 1 };
+  assert.equal(a.state.title, "", "callers cannot mutate the document through state");
+  assert.deepEqual(a.state.users, {});
+  assert.notEqual(a.state, a.state, "every read returns a fresh object");
+
+  const seen = [];
+  a.subscribe((change) => seen.push([change.origin, change.state.title]));
+  a.set(["title"], "local");
+  assert.equal(a.state.title, "local", "local ops invalidate the cache");
+  a.set(["title"], "local 2");
+  assert.deepEqual(seen, [["local", "local"], ["local", "local 2"]], "change.state is the state at event time");
+
+  b.set(["title"], "remote");
+  b.increment(["count"], 3);
+  a.merge(b.export());
+  assert.equal(a.state.count, 3, "imported ops invalidate the cache");
+  assert.equal(seen.at(-1)[0], "import");
+});
+
+test("write cost does not grow with the history when nobody subscribes", () => {
+  // Regression: every write used to materialize the full state for change
+  // notifications, even without listeners — quadratic in the history length.
+  const schema = defineSchema({ players: map(object({ x: register(0), y: register(0) })) });
+  const doc = createCrdtDocument({ id: "game", actorId: "a", schema });
+  const batch = (n, offset) => {
+    const t0 = performance.now();
+    for (let i = 0; i < n; i += 1) doc.set(["players", i % 2 ? "p1" : "p2", "x"], offset + i);
+    return performance.now() - t0;
+  };
+  batch(500, 0); // warm up the JIT
+  const early = batch(2_000, 1_000);
+  batch(18_000, 10_000); // grow the history to ~20k ops
+  const late = batch(2_000, 100_000);
+  assert.equal(doc.state.players.p1.x, 101_999);
+  assert.ok(late < early * 4, `2k writes: ${early.toFixed(1)} ms early vs ${late.toFixed(1)} ms at 20k ops`);
+});

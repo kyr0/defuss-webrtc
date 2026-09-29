@@ -99,6 +99,7 @@ export class CrdtDocument<S extends SchemaNode> {
   #actorSeqs = new Map<string, Set<number>>();
   #frontier = new Map<string, number>();
   #clock = 0;
+  #stateCache: InferSchema<S> | undefined;
   #localSeq = 0;
   #listeners = new Set<(change: CrdtChange<S>) => void>();
   #errorListeners = new Set<(error: CrdtError) => void>();
@@ -123,7 +124,11 @@ export class CrdtDocument<S extends SchemaNode> {
   }
 
   get state(): InferSchema<S> {
-    return this.#materializeNode(this.schema, [], 0) as InferSchema<S>;
+    // Materializing replays every op at every path, so the result is cached until
+    // the op-set changes. Callers still get a fresh copy each time (the state is
+    // small; the history behind it may not be), so they cannot mutate the cache.
+    this.#stateCache ??= this.#materializeNode(this.schema, [], 0) as InferSchema<S>;
+    return structuredClone(this.#stateCache);
   }
 
   get operationCount(): number {
@@ -461,7 +466,9 @@ export class CrdtDocument<S extends SchemaNode> {
   }
 
   #notify(origin: CrdtChange<S>["origin"], ops: readonly CrdtOp[]): void {
-    if (!ops.length) return;
+    // Without listeners nobody can observe the state: skip materializing it, so
+    // writes stay cheap no matter how long the history is.
+    if (!ops.length || !this.#listeners.size) return;
     const change: CrdtChange<S> = { origin, ops, state: this.state };
     for (const listener of this.#listeners) listener(change);
   }
@@ -508,6 +515,7 @@ export class CrdtDocument<S extends SchemaNode> {
       if (op.actor === this.actorId) this.#localSeq = Math.max(this.#localSeq, op.seq);
       added.push(op);
     }
+    if (added.length) this.#stateCache = undefined;
     void origin;
     return added;
   }

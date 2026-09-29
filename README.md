@@ -315,6 +315,10 @@ The docs app is served from `docs/` with `/dist/` mapped to a fresh library buil
 
 **Against a deployment, requests cost money.** Every open peer tab polls the signaling server about once per second, so with `E2E_BASE_URL` only the two `@remote` smoke tests run (mesh chat and protected room, roughly 50–60 requests), on one worker, stopping at the first failure; waits abort as soon as a peer logs a signaling failure instead of polling until the timeout. `E2E_REMOTE_ALL=1` runs the whole suite remotely. Each run prints the number of signaling requests it sent. Hunt flakes against the local server, never with `--repeat-each` against a deployment.
 
+## Roadmap
+
+Open work — CRDT performance and compaction, schema evolution, a realtime side channel for games, a packaged room client, server hardening — is tracked in [`ROADMAP.md`](ROADMAP.md).
+
 ## Repository layout
 
 - `src/` — the `defuss-webrtc` package: `ManualPeer` + signal bundles (`defuss-webrtc/webrtc`) and the CRDT layer (`defuss-webrtc/crdt`).
