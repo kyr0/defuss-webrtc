@@ -14,6 +14,9 @@ main.container { --layout-max: 48rem; }
 
 .steps-list { margin: 0; padding-inline-start: 1.2rem; }
 
+/* .alert sets display:flex, which would override the hidden attribute. */
+.alert[hidden] { display: none; }
+
 /* Rooms + connections: simple divided lists. */
 .item-list {
   list-style: none;

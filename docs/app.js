@@ -86,6 +86,7 @@ const roomStatus = $("room-status");
 const roomsList = $("rooms");
 const connectionsList = $("connections");
 const netStatus = $("net-status");
+const roomAlert = $("room-alert");
 const membersEl = $("members");
 const messagesEl = $("messages");
 const chatForm = $("chat-form");
@@ -248,6 +249,19 @@ function badge(text, variant) {
   el.dataset.variant = variant;
   el.textContent = text;
   return el;
+}
+
+/** Feedback right under the room buttons — the log alone is easy to miss. */
+function showRoomAlert(title, message, variant = "destructive") {
+  roomAlert.querySelector(".alert-title").textContent = title;
+  roomAlert.querySelector(".alert-description").textContent = message;
+  if (variant === "destructive") roomAlert.dataset.variant = "destructive";
+  else delete roomAlert.dataset.variant;
+  roomAlert.hidden = false;
+}
+
+function hideRoomAlert() {
+  roomAlert.hidden = true;
 }
 
 function statusItem(label, status, variant) {
@@ -456,6 +470,7 @@ async function joinWithOffers(name, password) {
 }
 
 async function onCreateRoom() {
+  hideRoomAlert();
   try {
     const name = roomName();
     const password = roomPasswordInput.value;
@@ -464,10 +479,17 @@ async function onCreateRoom() {
     enterRoom(name, password);
   } catch (error) {
     log(`Create room failed: ${error.message}`);
+    if (error.code === "ROOM_EXISTS") {
+      const name = roomNameInput.value.trim();
+      showRoomAlert("Room already exists", `"${name}" is already taken on this server — click Join room to join it, or pick another name.`);
+    } else {
+      showRoomAlert("Could not create the room", error.message);
+    }
   }
 }
 
 async function onJoinRoom() {
+  hideRoomAlert();
   joinRoomButton.disabled = true;
   try {
     const name = roomName();
@@ -478,6 +500,7 @@ async function onJoinRoom() {
   } catch (error) {
     resetRoomSessions();
     log(`Join failed: ${error.message}`);
+    showRoomAlert("Could not join the room", error.message);
   } finally {
     joinRoomButton.disabled = room !== null;
   }
@@ -490,6 +513,8 @@ function enterRoom(name, password) {
     if (!conn.detach) conn.detach = roomDoc.attach(conn.channel);
   }
   room = { name, password, myJoinedAt: null, pollTimer: null, lastPollAt: Date.now() };
+  hideRoomAlert();
+  refreshRooms(); // shows the "paused" note and invalidates in-flight list requests
   announceNickname();
   updateRoomUI();
   renderAll();
@@ -738,10 +763,23 @@ function renderRoomStatus(state) {
   roomStatus.textContent = `In room "${state.name}" — ${names.join(", ")}`;
 }
 
+// Every refresh takes a ticket; only the newest one may render. Otherwise a slow
+// response (e.g. from the default server URL at page load) can overwrite the
+// list of the server the user switched to in the meantime.
+let roomsTicket = 0;
+
 async function refreshRooms() {
+  const ticket = ++roomsTicket;
+  if (room) {
+    // Not polled while in a room (saves requests); say so instead of showing a stale list.
+    roomsList.replaceChildren(emptyItem("Paused while you are in a room — leave it to browse rooms."));
+    return;
+  }
   try {
-    renderRooms(await roomApi("GET", "/v1/rooms"));
+    const rooms = await roomApi("GET", "/v1/rooms");
+    if (ticket === roomsTicket && !room) renderRooms(rooms);
   } catch (error) {
+    if (ticket !== roomsTicket || room) return;
     roomsList.replaceChildren(emptyItem(/password/i.test(error.message) ? `${error.message}.` : "Signal server unreachable."));
   }
 }
@@ -768,9 +806,11 @@ function renderRooms(rooms) {
       join.dataset.size = "sm";
       join.textContent = "Join";
       join.addEventListener("click", () => {
+        if (roomNameInput.value.trim() !== entry.name) roomPasswordInput.value = ""; // a password belongs to one room
         roomNameInput.value = entry.name;
         if (entry.protected && !roomPasswordInput.value) {
           log(`Room "${entry.name}" is password protected — enter its password, then click Join room.`);
+          showRoomAlert("Password required", `Room "${entry.name}" is password protected — enter its password, then click Join room.`, "info");
           roomPasswordInput.focus();
           return;
         }
@@ -974,6 +1014,12 @@ createRoomButton.addEventListener("click", onCreateRoom);
 joinRoomButton.addEventListener("click", onJoinRoom);
 leaveRoomButton.addEventListener("click", () => onLeaveRoom());
 serverUrlInput.addEventListener("change", refreshRooms);
+// A room password belongs to one room: editing the name clears it, so a password
+// typed for one room (e.g. a failed join) never silently protects the next one.
+roomNameInput.addEventListener("input", () => {
+  roomPasswordInput.value = "";
+  hideRoomAlert();
+});
 serverPasswordInput.addEventListener("change", refreshRooms);
 saveStateButton.addEventListener("click", onSaveState);
 stateFileInput.addEventListener("change", () => {

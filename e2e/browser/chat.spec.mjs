@@ -2,7 +2,11 @@
 // context (isolated sessionStorage = its own identity), driving the real UI of
 // docs/index.html against a signaling server, then chatting over WebRTC.
 import { expect, test } from "@playwright/test";
-import { DOCS_URL, REMOTE, SERVER_PASSWORD, SIGNAL_URL } from "./env.mjs";
+import { DEFAULT_SIGNAL_URL, DOCS_URL, REMOTE, SERVER_PASSWORD, SIGNAL_URL } from "./env.mjs";
+
+// What the intercepted default server answers — slowly, so it arrives after the
+// target server's list. It must never be rendered (room-list race regression).
+const DEFAULT_SERVER_ROOM = "room-from-the-default-server";
 
 const RUN = Math.random().toString(36).slice(2, 8);
 let totalSignalRequests = 0;
@@ -52,7 +56,23 @@ class Peer {
 
   static async open(browser, nickname, { serverPassword = SERVER_PASSWORD } = {}) {
     const context = await browser.newContext();
+    let defaultServerAnswered = () => {};
+    const defaultServerDone = new Promise((resolve) => { defaultServerAnswered = resolve; });
+    if (SIGNAL_URL !== DEFAULT_SIGNAL_URL) {
+      // The page fetches the room list from its built-in default server on load;
+      // never let a local test run hit production.
+      await context.route(`${DEFAULT_SIGNAL_URL}/**`, async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await route.fulfill({
+          contentType: "application/json",
+          headers: { "access-control-allow-origin": "*" },
+          body: JSON.stringify([{ name: DEFAULT_SERVER_ROOM, memberCount: 1, createdAt: 0, protected: false }]),
+        }).catch(() => {}); // page may be gone already
+        defaultServerAnswered();
+      });
+    }
     const peer = new Peer(await context.newPage(), context, nickname);
+    peer.defaultServerDone = defaultServerDone;
     peer.serverPassword = serverPassword;
     await peer.page.goto(DOCS_URL);
     await peer.configure();
@@ -403,4 +423,65 @@ test("a hidden tab polls slowly and resyncs as soon as it is visible again", asy
   const beforeVisible = alice.signalRequests;
   await alice.setHidden(false);
   await expect.poll(() => alice.signalRequests - beforeVisible, { timeout: 1500 }).toBeGreaterThanOrEqual(1);
+});
+
+// ---------------------------------------------------------------------------
+// Room controls feedback
+// ---------------------------------------------------------------------------
+
+test("creating a room that already exists is explained next to the buttons", async ({ browser }) => {
+  const room = uniqueRoom("taken");
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.create(room);
+
+  await bob.page.fill("#room-name", room);
+  await bob.page.click("#create-room");
+  const alert = bob.page.locator("#room-alert");
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText("Room already exists");
+  await expect(alert).toContainText(`"${room}" is already taken`);
+
+  await bob.page.click("#join-room"); // the suggested way out
+  await expect(bob.page.locator("#room-status")).toContainText(`In room "${room}"`);
+  await expect(alert).toBeHidden();
+});
+
+test("a password typed for one room never protects the next one", async ({ browser }) => {
+  const secret = uniqueRoom("locked");
+  const next = uniqueRoom("next");
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.create(secret, { password: "right" });
+
+  await bob.join(secret, { password: "wrong" });
+  await expect(bob.page.locator("#room-alert")).toContainText(`Wrong password for room "${secret}"`);
+
+  await bob.page.fill("#room-name", next); // a new name: the stale password must go
+  await expect(bob.page.locator("#room-password")).toHaveValue("");
+  await expect(bob.page.locator("#room-alert")).toBeHidden();
+  await bob.page.click("#create-room");
+  await expect(bob.page.locator("#room-status")).toContainText(`In room "${next}"`);
+  await expect(bob.page.locator("#log")).not.toContainText(`Room "${next}" created (password protected)`);
+
+  const headers = SERVER_PASSWORD ? { "x-server-password": encodeURIComponent(SERVER_PASSWORD) } : {};
+  const rooms = await (await fetch(`${SIGNAL_URL}/v1/rooms`, { headers })).json();
+  expect(rooms.find((entry) => entry.name === next)?.protected).toBe(false);
+});
+
+test("the room list shows only the configured server and pauses inside a room", async ({ browser }) => {
+  const room = uniqueRoom("list");
+  const alice = await open(browser, "Alice");
+  await alice.create(room);
+  const bob = await open(browser, "Bob");
+
+  // Right after the slow default-server answer lands — before any periodic refresh
+  // (every 5 s) could paper over it — the list must still be the configured server's.
+  await bob.defaultServerDone;
+  await bob.page.waitForTimeout(150);
+  expect(await bob.page.textContent("#rooms")).not.toContain(DEFAULT_SERVER_ROOM);
+  await expect(bob.page.locator("#rooms")).toContainText(room);
+
+  await bob.joined(room);
+  await expect(bob.page.locator("#rooms")).toHaveText(/Paused while you are in a room/);
+  await bob.page.click("#leave-room");
+  await expect(bob.page.locator("#rooms")).toContainText(room);
 });
