@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../../src/webrtc/index.ts"],"names":[],"mappings":"AAAA,cAAc,iBAAiB,CAAC;AAChC,cAAc,gBAAgB,CAAC","sourcesContent":["export * from \"./candidates.js\";\nexport * from \"./signaling.js\";\n"]}

@@ -1,0 +1,1 @@
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../../src/crdt/index.ts"],"names":[],"mappings":"AAAA,cAAc,aAAa,CAAC;AAC5B,cAAc,UAAU,CAAC;AACzB,cAAc,WAAW,CAAC;AAC1B,cAAc,eAAe,CAAC","sourcesContent":["export * from \"./schema.js\";\nexport * from \"./ops.js\";\nexport * from \"./wire.js\";\nexport * from \"./document.js\";\n"]}

@@ -4,7 +4,7 @@ Open work, collected while building the signaling servers, the e2e suites and
 the reconnection logic. Items carry the evidence that motivated them. Roughly
 ordered by value within each section.
 
-## CRDT core — performance and history
+## CRDT core: performance and history
 
 Measured with a small game-like schema (two players, x/y registers, HP
 counter), ~201 bytes per op on the wire/in snapshots:
@@ -24,7 +24,7 @@ Writes are flat since the state cache and the listener-less notify fast path
   memo invalidated through `#byPath`), so per-write cost with listeners is
   independent of the history length too.
 - **Compaction / checkpointing.** The op-set only grows. Superseded ops (older
-  register values, counters folded into a base) could be dropped — but
+  register values, counters folded into a base) could be dropped, but
   anti-entropy relies on contiguous per-actor seq prefixes, so ops can only be
   compacted once they are causally stable (acknowledged by all peers). Needs a
   stability protocol and snapshot-based joins. Deliberately excluded in v0.1.
@@ -35,7 +35,7 @@ Writes are flat since the state cache and the listener-less notify fast path
   prevents seq collisions after reloads), so version vectors grow by one entry
   per reload. Negligible for chat; revisit together with compaction.
 
-## CRDT core — capabilities
+## CRDT core: capabilities
 
 - **Schema evolution.** The hello handshake requires byte-identical canonical
   schemas, so any schema change needs every peer to upgrade at once. Today's
@@ -48,7 +48,7 @@ Writes are flat since the state cache and the listener-less notify fast path
   by `docId` to several documents, and/or pass through foreign messages to an
   app handler instead of rejecting.
 - **Values are JSON, max 64 KiB per op** (`maxMessageBytes`, both sides).
-  Binary data would need base64 and would bloat the history — file transfer
+  Binary data would need base64 and would bloat the history; file transfer
   belongs outside the CRDT (see realtime channel below).
 
 ## Games and realtime data
@@ -58,12 +58,12 @@ Writes are flat since the state cache and the listener-less notify fast path
   data channel on `peer.connection` (`negotiated: true`, fixed `id` on both
   sides, `ordered: false, maxRetransmits: 0`) for latest-value broadcasts;
   keep durable state (scores, inventory, turn, chat) in the CRDT. Works
-  without core changes in principle — needs a prototype, a Playwright test
+  without core changes in principle; it needs a prototype, a Playwright test
   proving both channels coexist, and ideally a `ManualPeer` helper for it.
 - **One document per match** (`<room>:match-<n>`) as the documented pattern to
   reset history between rounds.
 - A shared-todo (or similar) panel in the docs app as a second data type over
-  the same connection, with a browser test — proof that non-chat data syncs
+  the same connection, with a browser test, as proof that non-chat data syncs
   without library changes.
 
 ## Library
@@ -72,7 +72,7 @@ Writes are flat since the state cache and the listener-less notify fast path
   app (`docs/app.js`); the README shows a fetch sketch. Extract a
   `joinRoom()` client (offers/answers, polling, heartbeat, mesh repair, the
   reconnection logic, passwords) into the package.
-- **Docs:** bring `ARCH.md` and `SKILL.md` up to date — server-based
+- **Docs:** bring `ARCH.md` and `SKILL.md` up to date: server-based
   signaling, reconnection, per-load actor ids, the state cache.
 
 ## Signaling servers
@@ -80,7 +80,7 @@ Writes are flat since the state cache and the listener-less notify fast path
 - **`HEAD` parity.** Express answers `HEAD` like `GET` (200); the Vercel router
   returns 404 NOT_FOUND. Harmless for clients, misleading for `curl -I`. Treat
   `HEAD` as `GET` without a body in `vercel/src/router.ts` and add an e2e case.
-- **Rate limiting** for password checks (both servers) — they are
+- **Rate limiting** for password checks (both servers); they are
   online-guessable (PROTOCOL.md §8).
 - **Per-member authentication** (session tokens or HMAC-signed peer ids):
   today anyone holding a room password can act as any member.
@@ -98,7 +98,7 @@ Writes are flat since the state cache and the listener-less notify fast path
 - **Clock skew.** Messages render chronologically by sender timestamp (CRDT
   order breaks ties); a device with a wrong clock places its messages off.
 - **Rejoin re-creates emptied rooms.** A tab rejoining a room everyone has
-  left creates it again (with the same password) and becomes moderator —
+  left creates it again (with the same password) and becomes moderator;
   decide whether that is the desired behavior.
 - **TURN configuration** in the UI (only a STUN field today; no credentials
   are bundled).
@@ -110,10 +110,8 @@ Writes are flat since the state cache and the listener-less notify fast path
   Add Firefox/WebKit projects and a cross-network (TURN) scenario.
 - **Live server-password coverage for Vercel.** Production has no
   `SERVER_PASSWORD`; run the suites once against a preview deployment with one.
-- **Pages workflow maintenance.** Bump `actions/checkout`, `setup-node`,
-  `configure-pages`, `upload-pages-artifact`, `deploy-pages` to their Node 24
-  majors (Node 20 actions are deprecated); `ubuntu-latest` moves to Ubuntu 26
-  from 2026-10-19.
+- **CI runner image.** `ubuntu-latest` moves to Ubuntu 26 from 2026-10-19;
+  the verify workflow's `npx playwright install --with-deps` must support it.
 - **Known platform difference:** Vercel's edge rejects malformed
   percent-encoding in URL paths (plain-text 400) before the function runs; the
   HTTP suite accepts and reports it. Not fixable in app code.

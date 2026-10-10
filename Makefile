@@ -21,7 +21,7 @@ LOG   = var/log/$(NAME)
 PID   = tmp/$(NAME).pid
 ALIVE = [ -f $(PID) ] && kill -0 "$$(cat $(PID))" 2>/dev/null
 
-.PHONY: help setup start stop restart status log metrics bench test coverage lint e2e verify
+.PHONY: help setup start stop restart status log metrics bench test coverage lint e2e verify site
 .DEFAULT_GOAL := help
 
 help: ## list the verbs with their usage (default goal)
@@ -68,10 +68,18 @@ log: ## tail stdout and stderr logs (N=50 lines)
 metrics:  ; @echo "UNKNOWN[metrics] BC undefined: print current service|build metrics"; exit 2  ## print current service|build metrics
 bench:    ; @echo "UNKNOWN[bench] BC undefined: measure hot paths before perf claims"; exit 2  ## measure hot paths before perf claims
 
-test: ## unit tests of the library, the Express room server and the Vercel functions
+test: ## unit tests of the library, the Express room server and the Vercel functions; docs/dist matches the build
 	npm test
 	npm --prefix server test
 	npm --prefix vercel test
+	@diff -rq dist docs/dist || { echo "docs/dist (served by GitHub Pages) differs from the fresh build: run make site, commit docs/dist"; exit 1; }
+
+# GitHub Pages deploys docs/ from main as committed, with no build step, so the library ships as a copy in docs/dist;
+# `make test` fails while that copy differs from a fresh build.
+site: ## rebuild the library from scratch and copy it to docs/dist for GitHub Pages
+	rm -rf dist docs/dist
+	npm run build
+	cp -R dist docs/dist
 
 # One process per package (--test-isolation=none): with Node 24.14's default process-per-file isolation the merged
 # report silently dropped dist/webrtc/*. The library and server are measured on their built dist/ (no type-only lines);

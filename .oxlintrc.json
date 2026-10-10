@@ -1,4 +1,6 @@
 {
+  // Build output committed for GitHub Pages; its source in src/ is linted.
+  "ignorePatterns": ["docs/dist/**"],
   "rules": {
     // Every hit snapshots a Map/Set the loop body deletes from (sweeps, teardown); the copy keeps entries that a
     // synchronous close() callback adds mid-loop out of that loop, so it is deliberate, not useless.

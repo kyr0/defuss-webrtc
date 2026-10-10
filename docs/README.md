@@ -5,13 +5,17 @@ offer/answer exchange, then all peers in a room connect to each other directly
 (full mesh) and sync the chat state conflict-free via CRDTs over the data
 channels. The server never sees chat traffic.
 
-Live: **https://kyr0.github.io/defuss-webrtc/** — it uses the hosted signaling
+Live: **https://kyr0.github.io/defuss-webrtc/**. It uses the hosted signaling
 server `https://defuss-webrtc.vercel.app` by default.
 
-The page imports the library from `./dist/`. `docs/dist/` is not committed:
-the Pages workflow (`.github/workflows/pages.yml`) builds the library and
-publishes `docs/` together with a fresh `dist/` on every push to `main`
-(Settings → Pages → Source: "GitHub Actions").
+GitHub Pages serves this folder from `main` as committed (Settings → Pages →
+Source: "Deploy from a branch", `main`, `/docs`); `.nojekyll` skips the Jekyll
+pass. There is no build step, so the page imports a committed copy of the
+library from `./dist/`. `make site` rebuilds that copy, and `make test` fails
+while it differs from a fresh build, so a stale library cannot ship unnoticed.
+A Pages workflow that builds on every push avoided the copy but needed its own
+deploy pipeline; serving the folder directly keeps the published page equal to
+what is in the repository.
 
 The UI is built with [defuss-shadcn](https://github.com/kyr0/defuss-shadcn)
 (plain HTML + design tokens, no build step), loaded from jsDelivr pinned to
@@ -20,15 +24,14 @@ page-specific layout (chat bubbles, lists, log) and uses the shadcn tokens.
 
 ## Run it locally
 
-Build the library next to the page, then serve this folder (ES modules don't
-load from `file://`):
+Serve this folder (ES modules don't load from `file://`). After changing the
+library in `src/`, run `make site` first so the page picks up the change:
 
 ```bash
-npm run build && cp -R dist docs/dist
-npx serve docs          # or: python3 -m http.server 8000 --directory docs
+python3 -m http.server 8000 --directory docs   # or: npx serve -l 8000 docs
 ```
 
-Open `http://localhost:8000/` in two tabs, browsers or devices — every tab is
+Open `http://localhost:8000/` in two tabs, browsers or devices; every tab is
 its own peer (identity lives in `sessionStorage`).
 
 The signal server URL defaults to the hosted `https://defuss-webrtc.vercel.app`.
@@ -41,7 +44,7 @@ cd server && npm install && npm run dev   # then use http://localhost:8787
 ## Usage
 
 1. Set a nickname.
-2. Enter a room name and click **Create room** (you become its moderator) — or
+2. Enter a room name and click **Create room** (you become its moderator), or
    **Join room** / click **Join** on a room in the list.
 3. The joining peer automatically offers to every existing member; everyone
    polls the server, answers the offers addressed to them, and within a few
