@@ -25,3 +25,4 @@ Wrap: EVERY lead → test | .agents/VERIFY.py rule | one MEMORY line with BC, th
 2026-10-10T17:09:46Z s=870f0a59 DONE fp=a857b34348e1 cov=82.3% paths=.oxlintrc.json,README.md,ROADMAP.md,docs/README.md(+15)
 2026-10-10T17:21:13Z s=870f0a59 DONE fp=9d74f8a8c05b cov=82.3% paths=.oxlintrc.json,README.md,ROADMAP.md,docs/README.md(+15)
 2026-10-10T17:21:13Z s=870f0a59 FINDING README.md:How it works T07 learn=none: diagram legibility is judged on the rendered image; no mechanical check
+2026-10-10T18:29:15Z s=870f0a59 DONE fp=3644ebb5b013 cov=82.3% paths=.oxlintrc.json,README.md,ROADMAP.md,docs/README.md(+16)
