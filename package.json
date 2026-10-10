@@ -50,6 +50,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "dev": "bunx serve@14.2.6 -c ../serve.json docs",
     "clean": "rm -rf ./dist",
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --test tests/*.test.mjs",
@@ -62,5 +63,6 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "typescript": "^5.9.3"
-  }
+  },
+  "packageManager": "npm@11.9.0"
 }

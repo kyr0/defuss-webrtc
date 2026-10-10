@@ -1,0 +1,69 @@
+/* Demo app layout. Colours, radii, shadows and fonts come from defuss-shadcn tokens; the JSON literal hue has no token
+   and stays a literal. Nothing is resizable or collapsible: every part of the connection stays in view. */
+@layer components {
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; line-height: 1.55; background: var(--background); color: var(--foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  [hidden] { display: none !important; }
+  code { font-family: var(--font-mono); font-size: .875em; }
+  .wr-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .wr-hint { margin: 0; font-size: .75rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+  /* the page: two tabs, the connection (wizard, then the chat) and the devtools, so neither sits below the other */
+  .wr-app { display: flex; flex-direction: column; gap: 1rem; max-width: 64rem; margin-inline: auto; padding: 1rem clamp(.75rem, 2vw, 1.5rem) 1.5rem; }
+  .wr-app-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .25rem 1rem; }
+  .wr-brand { display: inline-flex; align-items: center; gap: .5rem; font-weight: 700; color: inherit; text-decoration: none; }
+  .wr-brand .wr-icon { color: var(--chart-2); }
+  .wr-brand-sub { font-weight: 400; color: var(--muted-foreground); }
+  .wr-app-badges { display: flex; gap: .375rem; }
+  .wr-views .tab-list { max-width: 100%; overflow-x: auto; margin-block-end: 1rem; }
+  .wr-views .tab-trigger { gap: .375rem; }
+  .wr-main { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+
+  /* the wizard */
+  .wr-wizard .card-header { gap: 1rem; }
+  .wr-wizard .steps { overflow-x: auto; }
+  .wr-panel { display: flex; flex-direction: column; gap: 1rem; }
+  .wr-panel-title { margin: 0; font-size: 1.0625rem; font-weight: 600; }
+  .wr-wizard-nav { display: flex; gap: .5rem; }
+  .wr-spacer { flex: 1; }
+  .wr-field-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem .75rem; }
+  .wr-field-row .form-field { flex: 1 1 12rem; min-width: 0; }
+  .wr-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .wr-panel > .alert { margin: 0; }
+  .wr-steps { margin: 0; padding-inline-start: 1.2rem; font-size: .875rem; color: var(--muted-foreground); }
+  .wr-block { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+  .wr-heading { margin: 0; font-size: .75rem; font-weight: 600; letter-spacing: .02em; color: var(--muted-foreground); }
+  .wr-heading code { font-size: inherit; }
+
+  /* rooms and connections: simple divided lists */
+  .wr-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-md); font-size: .8125rem; }
+  .wr-list li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .5rem .75rem; overflow-wrap: anywhere; }
+  .wr-list li + li { border-top: 1px solid var(--border); }
+  .wr-list li.empty { color: var(--muted-foreground); }
+
+  /* the room */
+  .wr-room { gap: .875rem; padding: clamp(.875rem, 2vw, 1.25rem); }
+  .wr-room-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; }
+  .wr-room-copy { flex: 1 1 14rem; min-width: 0; }
+  .wr-room-status { margin: 0; font-size: .9375rem; font-weight: 600; overflow-wrap: anywhere; }
+  .wr-session { height: clamp(18rem, 55dvh, 32rem); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); }
+  .wr-session .bubble-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  /* devtools */
+  /* devtools: the tab has the width, so the sections sit in columns where they fit */
+  .wr-devtools-body { display: grid; gap: 1.25rem 1.5rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); align-items: start; padding-block-start: 1.25rem; }
+  .wr-state { margin: 0; }
+  .wr-state pre { max-height: 16rem; overflow: auto; margin: 0; }
+  .wr-json-literal { color: oklch(0.82 0.12 70); }
+  .wr-log { margin: 0; max-height: 14rem; overflow: auto; padding: .625rem .75rem; border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: var(--muted); font-family: var(--font-mono); font-size: .6875rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .wr-log:empty::after { content: "Nothing happened yet."; color: var(--muted-foreground); font-family: var(--font-sans); }
+
+  @media (prefers-contrast: more) {
+    .wr-hint, .wr-steps, .wr-heading { color: var(--foreground); }
+  }
+  @media (forced-colors: active) {
+    .wr-json-literal { color: CanvasText; }
+  }
+}

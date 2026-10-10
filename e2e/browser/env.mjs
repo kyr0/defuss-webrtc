@@ -7,7 +7,9 @@ export const REMOTE = process.env.E2E_BASE_URL?.replace(/\/+$/, "");
 export const SIGNAL_PORT = Number(process.env.E2E_SIGNAL_PORT ?? 47787);
 export const DOCS_PORT = Number(process.env.E2E_DOCS_PORT ?? 47173);
 export const SIGNAL_URL = REMOTE ?? `http://127.0.0.1:${SIGNAL_PORT}`;
-export const DOCS_URL = `http://127.0.0.1:${DOCS_PORT}/`;
+export const DOCS_URL = `http://127.0.0.1:${DOCS_PORT}/`; // the landing page
+// VERIFIED: site.spec.mjs loads DOCS_URL and chat.spec.mjs DEMO_URL through static-server.mjs.
+export const DEMO_URL = `${DOCS_URL}demo/`; // the chat app
 export const SERVER_PASSWORD = process.env.E2E_SERVER_PASSWORD ?? (REMOTE ? "" : "e2e-sërver-pässword");
 // The chat app's built-in default server. Tests against another target intercept it,
 // so local runs never touch production (see Peer.open).

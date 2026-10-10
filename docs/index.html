@@ -1,174 +1,1019 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>defuss-webrtc — P2P chat example</title>
-<link rel="icon" href="data:,">
-<script>
-  // Follow the OS color scheme; defuss-shadcn switches its token set on html.dark.
-  const scheme = matchMedia("(prefers-color-scheme: dark)");
-  const applyScheme = () => document.documentElement.classList.toggle("dark", scheme.matches);
-  applyScheme();
-  scheme.addEventListener("change", applyScheme);
-</script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/core.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/all.min.css">
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>defuss-webrtc · browser-to-browser data channels with CRDT sync</title>
+  <meta name="description" content="WebRTC data channels whose offer and answer travel as JSON files or through a tiny room signaling server (Node.js or Vercel), plus a schema-aware CRDT that keeps a shared JSON document in sync between every peer. Zero runtime dependencies.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='18' cy='5' r='3'/%3E%3Ccircle cx='6' cy='12' r='3'/%3E%3Ccircle cx='18' cy='19' r='3'/%3E%3Cpath d='m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98'/%3E%3C/svg%3E">
+  <script>
+    // Before paint, before df$ exists (defuss-shadcn Dark Mode guide): the saved choice, else the OS default.
+    // A defuss-store envelope (the defuss-store site writes one under the same key) is read as its value.
+    let saved = '';
+    try {
+      const raw = JSON.parse(localStorage.getItem('defuss-shadcn-theme'));
+      saved = raw && raw.format === 'defuss-store' ? raw.value : raw;
+    } catch {}
+    if (saved === 'dark' || ((!saved || saved === 'system') && matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.colorScheme = 'dark';
+    }
+  </script>
+  <!-- defuss-shadcn from jsDelivr at an exact release, pinned by Subresource Integrity. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/core.min.css" integrity="sha384-XTkN5+CRRKO70LZ4OcV6O+kj6BY5lxdsRQ02oMz3kDCm9kd4B+16jbojkbgrbL0e" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/theme/utils/shapes.min.css" integrity="sha384-Ql86bF5zW5vFVk35X7GH6sUNZRTsmU93YO1iJBw/sYwgnlr4sgF+hBn1S5vDPI2G" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/all.min.css" integrity="sha384-3N21mZZQYTo6BWRxl629QHRrstw0IXVKRonDLdRbrYlODgFskMA/kODfnDX/gNk4" crossorigin="anonymous">
+  <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
-<main class="container stack py-8">
-  <header class="stack gap-2">
-    <h1 class="h2">defuss-webrtc P2P chat</h1>
-    <p class="muted">
-      P2P chat demo: peers find each other through a tiny room signaling server
-      (offers/answers over HTTP), then chat over direct WebRTC data channels with
-      schema-aware CRDT state sync. The server only brokers signaling — no chat
-      traffic ever passes through it. A manual file-based flow (fully serverless)
-      is available under "Advanced".
-    </p>
+<svg class="sr-only" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2m-7.07-17.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-7-7 7 7-7 7"/></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14m7-7-7 7-7-7"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M7 7h10v10M7 17 17 7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12.83 2.18 8.58 3.9a1 1 0 0 1 0 1.83l-8.58 3.9a2 2 0 0 1-1.66 0L2.6 7.91a1 1 0 0 1 0-1.83l8.58-3.9a2 2 0 0 1 1.66 0Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65M22 12.65l-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+  <symbol id="i-feather" viewBox="0 0 24 24"><path d="M12.67 19a2 2 0 0 0 1.416-.588l6.154-6.172a6 6 0 0 0-8.49-8.49L5.586 9.914A2 2 0 0 0 5 11.328V18a1 1 0 0 0 1 1z"/><path d="M16 8 2 22M17.5 15H9"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6m8 14h8"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2m16 0h2m-7-1v2m-6-2v2"/></symbol>
+  <symbol id="i-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12m0 0 8.7-5M12 12 3.3 7"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M10 12.5 8 15l2 2.5m4-5 2 2.5-2 2.5M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+  <symbol id="i-linkedin" viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6zM2 9h4v12H2z"/><circle cx="4" cy="4" r="2"/></symbol>
+  <!-- the npm mark (Simple Icons, CC0), drawn filled like the LinkedIn mark -->
+  <symbol id="i-npm" viewBox="0 0 24 24"><path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24"><path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
+  <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+</svg>
+
+<div id="top" class="wr-page">
+  <header class="mk-header" data-variant="floating">
+    <div class="mk-header-inner">
+      <a href="#top" class="mk-header-brand"><svg class="wr-icon wr-brand-icon" aria-hidden="true"><use href="#i-logo"/></svg><span class="mk-header-name">defuss-webrtc</span></a>
+      <nav class="mk-header-nav" aria-label="Main">
+        <ul class="nav-menu-list">
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#demo">Demo</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#how">How it works</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#server">Server</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#explorer">CRDT explorer</a></li>
+          <li class="nav-menu-item"><a class="nav-menu-link" href="#api">API</a></li>
+        </ul>
+      </nav>
+      <div class="mk-header-actions">
+        <label class="swap" data-variant="rotate" data-size="sm">
+          <input type="checkbox" id="theme-toggle" aria-label="Dark mode">
+          <span class="swap-on"><svg class="wr-icon" aria-hidden="true"><use href="#i-moon"/></svg></span>
+          <span class="swap-off"><svg class="wr-icon" aria-hidden="true"><use href="#i-sun"/></svg></span>
+        </label>
+        <a class="btn mk-header-wide" data-variant="ghost" data-size="icon" href="https://github.com/kyr0/defuss-webrtc" aria-label="defuss-webrtc on GitHub"><svg class="wr-icon" aria-hidden="true"><use href="#i-github"/></svg></a>
+        <a class="btn mk-header-wide" data-variant="ghost" data-size="icon" href="https://www.npmjs.com/package/defuss-webrtc" aria-label="defuss-webrtc on npm"><svg class="wr-icon wr-icon-fill" aria-hidden="true"><use href="#i-npm"/></svg></a>
+        <a class="btn mk-header-wide" data-size="sm" href="#install">Install</a>
+        <button type="button" class="btn mk-header-menu" data-variant="ghost" data-size="icon" data-sheet-trigger="wr-menu" aria-haspopup="dialog" aria-label="Open menu"><svg class="wr-icon" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      </div>
+    </div>
+    <dialog id="wr-menu" class="sheet" data-side="right" role="dialog" aria-modal="true" aria-labelledby="wr-menu-title">
+      <div class="sheet-content">
+        <div class="sheet-header">
+          <h2 class="sheet-title" id="wr-menu-title">defuss-webrtc</h2>
+        </div>
+        <div class="sheet-body">
+          <p class="mk-header-sheet-label">This page</p>
+          <ul class="mk-header-sheet-nav">
+            <li><a href="#demo" data-sheet-close>Demo <small>Two peers chatting over a data channel</small></a></li>
+            <li><a href="#how" data-sheet-close>How it works <small>Signaling, by server or by hand, and CRDT sync</small></a></li>
+            <li><a href="#server" data-sheet-close>Signaling server <small>Node.js or Vercel, and what they store</small></a></li>
+            <li><a href="#explorer" data-sheet-close>CRDT explorer <small>Merge two offline replicas</small></a></li>
+            <li><a href="#api" data-sheet-close>API</a></li>
+            <li><a href="#install" data-sheet-close>Install</a></li>
+          </ul>
+        </div>
+        <div class="sheet-footer mk-header-sheet-actions">
+          <a class="btn" data-variant="outline" href="https://github.com/kyr0/defuss-webrtc"><svg class="wr-icon" aria-hidden="true"><use href="#i-github"/></svg>GitHub</a>
+          <a class="btn" data-variant="outline" href="https://www.npmjs.com/package/defuss-webrtc"><svg class="wr-icon wr-icon-fill" aria-hidden="true"><use href="#i-npm"/></svg>npm</a>
+        </div>
+      </div>
+    </dialog>
   </header>
 
-  <section class="card">
-    <div class="card-header">
-      <h2 class="card-title">1. Your identity</h2>
-      <p id="identity-status" class="card-description"></p>
+  <main class="wr-main">
+
+  <section class="parallax" aria-label="Introduction" style="padding-block:clamp(4rem, 10vw, 7rem) 1rem">
+    <div class="parallax-layer" data-depth="far" aria-hidden="true">
+      <div class="pattern-grid" style="width:100%;height:100%;--shape-ink:color-mix(in oklch, var(--foreground) 7%, transparent);--shape-pattern:32px;mask-image:radial-gradient(55% 60% at 50% 45%, #000, transparent 75%)"></div>
     </div>
-    <div class="card-content">
-      <div class="flex flex-wrap items-end gap-3">
-        <div class="form-field flex-1">
-          <label class="label" for="nickname">Nickname</label>
-          <input class="input" id="nickname" type="text" placeholder="e.g. Alice" autocomplete="off">
+    <div class="parallax-layer" data-depth="mid" aria-hidden="true" style="--parallax-speed:22%;mask-image:linear-gradient(#000 55%, transparent 92%)">
+      <div class="corner-blob" style="position:absolute;inset-block-start:10%;inset-inline-start:8%;width:min(22rem, 45%);aspect-ratio:1;background:color-mix(in oklch, var(--chart-2) 45%, transparent);filter:blur(60px);opacity:.55"></div>
+      <div class="corner-blob-3" style="position:absolute;inset-block-start:28%;inset-inline-end:6%;width:min(18rem, 40%);aspect-ratio:1;background:color-mix(in oklch, var(--chart-4) 40%, transparent);filter:blur(60px);opacity:.5"></div>
+    </div>
+    <div class="parallax-content">
+      <section class="mk-hero" style="width:100%">
+        <div class="mk-hero-copy">
+          <a class="mk-hero-pill" href="#install"><span class="badge" data-variant="default" data-size="sm">v0.1.0</span>Zero dependencies · files or a room server · CRDT sync <svg class="wr-icon" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <h1 class="mk-hero-title">Browser-to-browser data channels with <strong>CRDT state sync</strong> that</h1>
+          <p class="wr-flip"><span class="text-rotate"><span>
+              <span class="wr-accent">need no server at all</span>
+              <span class="wr-accent">mesh a whole room in seconds</span>
+              <span class="wr-accent">keep your data off the server</span>
+              <span class="wr-accent">merge offline edits without conflicts</span>
+              <span class="wr-accent">heal dropped links on their own</span>
+          </span></span></p>
+          <p class="mk-hero-desc"><code>defuss-webrtc</code> wraps WebRTC so that two peers only have to exchange <strong>one offer and one answer</strong>. Both travel as self-contained JSON: by hand as a file, or through a tiny room signaling server that ships in this repository for <strong>Node.js</strong> and for <strong>Vercel</strong>. Once the data channel is open, a <strong>schema-aware CRDT</strong> keeps one JSON document in sync between every peer.</p>
+          <div class="mk-hero-actions">
+            <a class="btn" data-size="lg" href="#demo">Try the live demo<svg class="wr-icon" aria-hidden="true"><use href="#i-arrow-down"/></svg></a>
+            <a class="btn" data-variant="outline" data-size="lg" href="#explorer">Merge two replicas</a>
+          </div>
+          <p class="mk-hero-note">Built by <a href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener">Aron Homberg (kyr0)<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a> – Open Source (<a href="https://github.com/kyr0/defuss-webrtc/blob/main/LICENSE" target="_blank" rel="noopener">MIT<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>)</p>
         </div>
-        <button class="btn" data-variant="default" id="set-nickname">Set nickname</button>
+      </section>
+      <div class="wr-intro" id="intro">
+        <section class="wr-intro-item" aria-labelledby="intro-1">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-braces"/></svg></span>
+          <h3 id="intro-1">One offer, one answer</h3>
+          <p><code>ManualPeer</code> waits until ICE gathering is complete, then returns a <code>SignalBundle</code>: <strong>complete SDP with every candidate</strong>, no trickle ICE. Signaling is exactly two JSON messages.</p>
+        </section>
+        <section class="wr-intro-item" aria-labelledby="intro-2">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-file"/></svg></span>
+          <h3 id="intro-2">Signaling without a server</h3>
+          <p>A bundle is a file like any other: send it by chat, email, QR code or USB stick. The peers only need a way to pass <strong>two files</strong>, and nothing else stands between them.</p>
+        </section>
+        <section class="wr-intro-item" aria-labelledby="intro-3">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-server"/></svg></span>
+          <h3 id="intro-3">Rooms in seconds</h3>
+          <p>The room server pairs every newcomer with every member: <strong>the joiner offers, the members answer</strong>, and polling doubles as the presence heartbeat. Node.js or Vercel, one protocol.</p>
+        </section>
+        <section class="wr-intro-item" aria-labelledby="intro-4">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-lock"/></svg></span>
+          <h3 id="intro-4">Your data stays between peers</h3>
+          <p>After signaling, application traffic flows <strong>peer to peer</strong>. A signaling server holds members, offers and answers, never a message; offers and answers expire after 120 seconds.</p>
+        </section>
+        <section class="wr-intro-item" aria-labelledby="intro-5">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-merge"/></svg></span>
+          <h3 id="intro-5">Conflict-free by schema</h3>
+          <p>The schema names the merge rule of every path: last-writer-wins register, counter, add-wins set, map, RGA list. Replicas <strong>converge in any delivery order</strong>, also after days offline.</p>
+        </section>
+        <section class="wr-intro-item" aria-labelledby="intro-6">
+          <span class="wr-intro-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-feather"/></svg></span>
+          <h3 id="intro-6">Zero dependencies</h3>
+          <p>ES modules with TypeScript declarations, built on the browser's own <code>RTCPeerConnection</code>. <strong>No runtime dependencies</strong>; STUN defaults to Cloudflare's public server, TURN plugs in through <code>iceServers</code>.</p>
+        </section>
       </div>
     </div>
   </section>
 
-  <section class="card">
-    <div class="card-header">
-      <h2 class="card-title">2. Join a room</h2>
-      <p id="room-status" class="card-description">Create a room or join an existing one.</p>
-    </div>
-    <div class="card-content stack">
-      <div class="flex flex-wrap gap-3">
-        <div class="form-field flex-1">
-          <label class="label" for="server-url">Signal server URL</label>
-          <input class="input" id="server-url" type="text" value="https://defuss-webrtc.vercel.app" autocomplete="off">
-        </div>
-        <div class="form-field flex-1">
-          <label class="label" for="server-password">Server password <span class="label-hint">(optional)</span></label>
-          <input class="input" id="server-password" type="password" placeholder="Only if the server requires one" autocomplete="off">
-        </div>
+  <div class="wr-flythrough">
+    <section class="parallax" data-sticky style="--parallax-length:2" aria-label="Offer, answer, peer to peer">
+      <div class="parallax-stage" style="background:radial-gradient(circle at 50% 50%, color-mix(in oklch, var(--chart-2) 55%, #05060f), #05060f 72%);color:#fff;border-radius:var(--radius-xl)">
+        <div class="parallax-layer" data-motion="zoom fade" style="--parallax-scale:6"><svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><g fill="none" stroke="#7cf0ff" stroke-width="1" opacity=".55"><circle cx="120" cy="200" r="34"/><circle cx="280" cy="200" r="34"/><path d="M154 200h92"/><circle cx="200" cy="110" r="18" stroke-dasharray="3 4"/><path d="M134 170 186 122M266 170 214 122" stroke-dasharray="3 4"/></g></svg></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 0% contain 40%;z-index:1"><p class="wr-fly-word">Send one offer.</p></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 30% contain 70%;z-index:2"><p class="wr-fly-word">Get one answer.</p></div>
+        <div class="parallax-layer" data-motion="pass" style="animation-range:contain 60% contain 100%;z-index:3"><p class="wr-fly-word">Then talk peer to peer.</p></div>
+        <div class="parallax-layer" data-motion="spin" style="--parallax-turn:180deg;--parallax-speed:0%;z-index:-1;opacity:.25"><svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g fill="none" stroke="#fff" stroke-width=".6"><path d="M200 200 460 200M200 200 425.2 330M200 200 330 425.2M200 200 200 460M200 200 70 425.2M200 200-25.2 330M200 200-60 200M200 200-25.2 70M200 200 70-25.2M200 200 200-60M200 200 330-25.2M200 200 425.2 70"/></g></svg></div>
       </div>
-      <div class="flex flex-wrap gap-3">
-        <div class="form-field flex-1">
-          <label class="label" for="room-name">Room name</label>
-          <input class="input" id="room-name" type="text" placeholder="e.g. lobby" autocomplete="off">
-        </div>
-        <div class="form-field flex-1">
-          <label class="label" for="room-password">Room password <span class="label-hint">(optional)</span></label>
-          <input class="input" id="room-password" type="password" placeholder="Protects a new room / unlocks a protected one" autocomplete="off">
-        </div>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button class="btn" data-variant="default" id="create-room">Create room</button>
-        <button class="btn" data-variant="secondary" id="join-room">Join room</button>
-        <button class="btn" data-variant="outline" id="leave-room" disabled>Leave room</button>
-      </div>
-      <div id="room-alert" class="alert" role="alert" hidden>
-        <div class="alert-content">
-          <h5 class="alert-title"></h5>
-          <p class="alert-description"></p>
-        </div>
-      </div>
+    </section>
+  </div>
 
-      <div class="stack gap-2">
-        <h3 class="small">Rooms on this server</h3>
-        <ul id="rooms" class="item-list"></ul>
+  <section id="demo" class="container wr-section parallax-reveal" data-reveal="zoom" aria-labelledby="demo-title">
+    <header class="mk-section-header" data-align="center">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Live demo</span>
+        <h2 class="mk-section-header-title" id="demo-title">💬 Two peers, one room, no chat server</h2>
+        <p class="mk-section-header-desc">Peer A and Peer B are two copies of the same chat app, side by side, each with its own peer id. Start them and walk both through the connect steps (mode, signaling server, this peer, room), then click <strong>Create room</strong> in Peer A and <strong>Join room</strong> in Peer B. The room server brokers one offer and one answer, the chat opens, and every message travels over a direct WebRTC data channel and merges as CRDT operations. Each peer's <strong>Peer devtools</strong> tab, next to its chat, shows its connections, its CRDT document and its log.</p>
       </div>
-
-      <div class="form-field">
-        <label class="label" for="stun-servers">STUN server(s)</label>
-        <input class="input" id="stun-servers" type="text" value="stun:stun.cloudflare.com:3478" autocomplete="off" aria-describedby="stun-desc">
-        <p class="field-description" id="stun-desc">Comma separated — empty means host candidates only (same machine/LAN).</p>
-      </div>
-
-      <div class="stack gap-2">
-        <h3 class="small">Connections</h3>
-        <ul id="connections" class="item-list"></ul>
-      </div>
-
-      <details class="collapsible">
-        <summary class="collapsible-trigger">
-          <span>Advanced: manual signaling without a server</span>
-          <svg class="collapsible-chevron" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-        </summary>
-        <div class="collapsible-content stack">
-          <div class="flex flex-wrap items-end gap-3">
-            <button class="btn" data-variant="outline" id="create-offer">Create offer &amp; download PEER.json</button>
-            <div class="form-field flex-1">
-              <label class="label" for="signal-file">Upload PEER.json (offer or answer)</label>
-              <input class="file-input" id="signal-file" type="file" accept="application/json,.json">
-            </div>
+    </header>
+    <div class="wr-window">
+      <!-- defuss-shadcn documents a Teaser for this, but its 0.9.8 release does not ship it: a card with a start button,
+           and site.js swaps in the template's two frames, so nothing loads (and nothing calls the server) before a click -->
+      <div class="wr-slot" id="playground">
+        <div class="aura" style="--shape-round:var(--radius-lg)">
+          <div class="card wr-start">
+            <h3 class="wr-start-title">Start Peer A and Peer B</h3>
+            <p class="wr-start-text">Both load the chat app and contact the hosted signaling server <code>defuss-webrtc.vercel.app</code>. Nothing loads before you click.</p>
+            <button type="button" class="btn" data-size="lg" id="playground-start"><svg class="wr-icon" aria-hidden="true"><use href="#i-play"/></svg>Start the two-peer demo</button>
           </div>
-          <ol class="muted steps-list">
-            <li>Peer A clicks <em>Create offer</em> and sends the downloaded PEER.json to peer B (chat, email, USB stick, …).</li>
-            <li>Peer B uploads that file — an answer PEER.json is downloaded automatically — and sends it back to A.</li>
-            <li>Peer A uploads the answer file. The data channel opens and the chat state starts syncing.</li>
+        </div>
+        <template>
+          <div class="wr-peers">
+            <div class="wr-frame"><figure class="iframe" data-fit="container" data-variant="bare"><iframe class="iframe-frame" src="demo/?peer=a" title="Peer A: the defuss-webrtc chat demo"></iframe></figure></div>
+            <div class="wr-frame"><figure class="iframe" data-fit="container" data-variant="bare"><iframe class="iframe-frame" src="demo/?peer=b" title="Peer B: the defuss-webrtc chat demo"></iframe></figure></div>
+          </div>
+        </template>
+      </div>
+      <div class="wr-window-foot">
+        <p class="wr-window-note"><svg class="wr-icon" aria-hidden="true"><use href="#i-shield"/></svg>The server sees offers, answers and presence, never a message. Each frame keeps its peer id for this tab: after a restart, joining again continues as the same peer.</p>
+        <div class="wr-window-actions">
+          <button type="button" class="btn" data-variant="ghost" data-size="sm" id="playground-restart"><svg class="wr-icon" aria-hidden="true"><use href="#i-reload"/></svg>Restart both</button>
+          <a class="btn" data-variant="outline" data-size="sm" href="demo/" target="_blank" rel="noopener"><svg class="wr-icon" aria-hidden="true"><use href="#i-maximize"/></svg>Add a peer in a new tab<span class="sr-only"> (opens in a new tab)</span></a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="container wr-section parallax-reveal" aria-labelledby="how-title">
+    <section class="mk-features" style="width:100%">
+      <div class="mk-features-head">
+        <span class="mk-features-eyebrow">How it works</span>
+        <h2 class="mk-features-title" id="how-title">💡 Signal once, then sync directly</h2>
+        <p class="mk-features-desc">WebRTC can only open a data channel after both peers know each other's session description: codecs, ICE credentials, DTLS fingerprints and the network addresses (candidates) where they might be reachable. Getting that across is <em>signaling</em>, and WebRTC leaves it to you. <code>defuss-webrtc</code> packs it into one offer bundle and one answer bundle, so any channel that can carry two JSON messages will do. Press play on each diagram, or click a box or an arrow to read what it does.</p>
+      </div>
+    </section>
+
+    <div class="wr-diagram-block">
+      <div class="wr-diagram-copy">
+        <span class="wr-diagram-number" aria-hidden="true">A</span>
+        <div>
+          <h3 class="wr-subtitle">Automatic: a room on the signaling server</h3>
+          <p class="wr-way-desc">The room server is a rendezvous point, not a relay. Peer B joins a room in which Peer A already waits, offers to every member it finds, and both sides poll until the offer is answered. ICE then finds a network path between the browsers, and the server drops out of the picture.</p>
+        </div>
+      </div>
+      <figure class="diagram wr-seq" id="flow-room" data-type="sequence" data-steps data-autoplay="600" data-interactive aria-label="Peer A creates a room, Peer B joins it; the server relays one offer and one answer, then the peers connect directly">
+        <figcaption class="diagram-caption">
+          <span class="diagram-eyebrow">Sequence · room signaling</span>
+          <span class="diagram-title">From an empty room to a direct data channel</span>
+          <span class="diagram-dek">Calls are solid, responses dashed. The last arrow bypasses the server.</span>
+        </figcaption>
+        <div class="diagram-canvas" style="--cols:3">
+          <div class="diagram-node" data-node="a" data-detail="Peer A created the room, so it is the room's moderator. It polls the room every 2 seconds; each poll is also its presence heartbeat.">
+            <span class="diagram-node-eyebrow">Browser · creator</span>
+            <span class="diagram-node-name">Peer A</span>
+          </div>
+          <div class="diagram-node" data-node="server" data-tone="link" data-detail="Express or Vercel Functions, one protocol (server/PROTOCOL.md). It stores members, offers and answers per room, and never sees the data channel.">
+            <span class="diagram-node-eyebrow">/v1 · HTTP + JSON</span>
+            <span class="diagram-node-name">Room server</span>
+          </div>
+          <div class="diagram-node" data-node="b" data-detail="Peer B joins later, so the protocol gives it the offer duty: one fresh offer per member already in the room.">
+            <span class="diagram-node-eyebrow">Browser · joiner</span>
+            <span class="diagram-node-name">Peer B</span>
+          </div>
+          <ol class="diagram-edges">
+            <li class="diagram-edge" data-from="a" data-to="server" data-detail="POST /v1/rooms/{name} with peerId, nickname and an optional room password. The creator becomes the first member, with role moderator.">POST /rooms/lobby · create</li>
+            <li class="diagram-edge" data-from="server" data-to="a" data-line="dashed" data-head="open">201 · A is moderator</li>
+            <li class="diagram-edge" data-from="b" data-to="server" data-detail="GET /v1/rooms/{name}/members returns the room state: members sorted by joinedAt, plus the pending offers and answers.">GET …/members · who is here?</li>
+            <li class="diagram-edge" data-from="server" data-to="b" data-line="dashed" data-head="open">members: [A]</li>
+            <li class="diagram-edge" data-from="b" data-to="b" data-detail="createOffer() opens an RTCPeerConnection and waits for ICE gathering to complete (host candidates, plus server-reflexive ones from STUN), so the bundle holds every candidate.">createOffer() · gather ICE</li>
+            <li class="diagram-edge" data-from="b" data-to="server" data-detail="POST …/join carries one offer per member, addressed to exactly one peer each. The join is atomic: one invalid offer and B is not added.">POST …/join · offers: [to A]</li>
+            <li class="diagram-edge" data-from="a" data-to="server" data-detail="Every poll with ?peerId= sets the member's lastSeen. Members silent for 90 seconds are removed.">GET …/members?peerId=A · poll</li>
+            <li class="diagram-edge" data-from="server" data-to="a" data-line="dashed" data-head="open">offers[] to A</li>
+            <li class="diagram-edge" data-from="a" data-to="a" data-detail="acceptOffer() applies B's description and returns an answer bundle, again after ICE gathering is complete.">acceptOffer() → answer</li>
+            <li class="diagram-edge" data-from="a" data-to="server" data-detail="POST …/answers stores the answer under the offer's sessionId and deletes (consumes) the offer, atomically.">POST …/answers · offer consumed</li>
+            <li class="diagram-edge" data-from="b" data-to="server">GET …/members?peerId=B · poll</li>
+            <li class="diagram-edge" data-from="server" data-to="b" data-line="dashed" data-head="open">answers[] to B</li>
+            <li class="diagram-edge" data-from="b" data-to="b">acceptAnswer()</li>
+            <li class="diagram-edge" data-from="b" data-to="a" data-tone="accent" data-line="thick" data-flow="1600" data-detail="ICE connectivity checks pick a working candidate pair, DTLS secures it, and the RTCDataChannel opens. From here on, nothing passes through the server.">ICE checks · DTLS · data channel open</li>
           </ol>
         </div>
-      </details>
+      </figure>
+      <output class="wr-flow-detail" data-diagram-for="flow-room">Click a box or an arrow to read what it does.</output>
     </div>
-  </section>
 
-  <section class="card">
-    <div class="card-header">
-      <div class="flex items-center justify-between gap-2">
-        <h2 class="card-title">3. Chat</h2>
-        <span id="net-status" class="badge" data-variant="secondary" role="status" aria-live="polite">online</span>
+    <div class="wr-diagram-block">
+      <div class="wr-diagram-copy">
+        <span class="wr-diagram-number" aria-hidden="true">B</span>
+        <div>
+          <h3 class="wr-subtitle">Manual: two files, no server</h3>
+          <p class="wr-way-desc">The same two bundles can travel by hand. Peer A downloads its offer as <code>PEER.json</code> and sends it any way it likes; Peer B uploads it and gets an answer file to send back. The offering tab must stay open until the answer arrives, because the offer belongs to a live <code>RTCPeerConnection</code>: a bundle is short-lived session state, not a contact card.</p>
+        </div>
       </div>
-      <p id="members" class="card-description"></p>
+      <figure class="diagram wr-seq" id="flow-manual" data-type="sequence" data-steps data-autoplay="600" data-interactive aria-label="Peer A and Peer B exchange an offer file and an answer file through any channel, then connect directly">
+        <figcaption class="diagram-caption">
+          <span class="diagram-eyebrow">Sequence · out-of-band signaling</span>
+          <span class="diagram-title">One file out, one file back</span>
+          <span class="diagram-dek">The channel in the middle can be anything that carries a file: a messenger, email, a QR code, a USB stick.</span>
+        </figcaption>
+        <div class="diagram-canvas" style="--cols:3">
+          <div class="diagram-node" data-node="a" data-detail="Peer A starts. Its RTCPeerConnection must stay alive until the answer comes back.">
+            <span class="diagram-node-eyebrow">Browser</span>
+            <span class="diagram-node-name">Peer A</span>
+          </div>
+          <div class="diagram-node" data-node="channel" data-tone="external" data-detail="Any channel two people already share. The files hold SDP, ICE credentials, candidate addresses and DTLS fingerprints: treat them as short-lived, sensitive session material.">
+            <span class="diagram-node-eyebrow">Out of band</span>
+            <span class="diagram-node-name">Any channel</span>
+            <span class="diagram-node-meta">chat · email · QR · USB</span>
+          </div>
+          <div class="diagram-node" data-node="b" data-detail="Peer B answers. Its answer file is downloaded automatically in the demo.">
+            <span class="diagram-node-eyebrow">Browser</span>
+            <span class="diagram-node-name">Peer B</span>
+          </div>
+          <ol class="diagram-edges">
+            <li class="diagram-edge" data-from="a" data-to="a" data-detail="createOffer() gathers ICE until it is complete, then returns the offer bundle; after 15 seconds without completion it rejects (iceGatheringTimeoutMs).">createOffer() · gather ICE</li>
+            <li class="diagram-edge" data-from="a" data-to="channel" data-detail="downloadSignalBundle() saves the bundle as JSON: protocol defuss-webrtc/manual-signal/1, kind offer, sessionId, peerId, description, candidates.">PEER.json · offer</li>
+            <li class="diagram-edge" data-from="channel" data-to="b">upload the offer</li>
+            <li class="diagram-edge" data-from="b" data-to="b" data-detail="acceptOffer() checks the bundle (parseSignalBundle), applies it and returns the answer bundle; replyTo names the offer's sessionId.">acceptOffer() → answer</li>
+            <li class="diagram-edge" data-from="b" data-to="channel">PEER.json · answer</li>
+            <li class="diagram-edge" data-from="channel" data-to="a">upload the answer</li>
+            <li class="diagram-edge" data-from="a" data-to="a">acceptAnswer()</li>
+            <li class="diagram-edge" data-from="a" data-to="b" data-tone="accent" data-line="thick" data-flow="1600" data-detail="ICE picks a working candidate pair and the data channel opens. STUN-only is best effort: some NAT combinations need TURN, which plugs in through iceServers.">ICE checks · DTLS · data channel open</li>
+          </ol>
+        </div>
+      </figure>
+      <output class="wr-flow-detail" data-diagram-for="flow-manual">Click a box or an arrow to read what it does.</output>
     </div>
-    <div class="card-content stack gap-3">
-      <div id="messages" class="scroll-area" aria-live="polite"></div>
-      <form id="chat-form" class="flex gap-2">
-        <input class="input flex-1" id="message-input" type="text" placeholder="Join a room to chat…" autocomplete="off" aria-label="Message" disabled>
-        <button class="btn" data-variant="default" type="submit" disabled>Send</button>
-      </form>
+
+    <div class="wr-diagram-block">
+      <div class="wr-diagram-copy">
+        <span class="wr-diagram-number" aria-hidden="true">C</span>
+        <div>
+          <h3 class="wr-subtitle">CRDT over the open data channel</h3>
+          <p class="wr-way-desc"><code>doc.attach(channel)</code> binds one CRDT document to a reliable, ordered data channel. On open, both sides send <code>hello</code> with their canonical schema and version vector; each then sends the operations the other lacks. Every local write becomes one operation <code>(actor, seq, Lamport clock)</code> that goes to every attached channel, and a peer forwards what it learns to its other channels, so a mesh needs no central copy.</p>
+        </div>
+      </div>
+      <figure class="diagram wr-seq" id="flow-crdt" data-type="sequence" data-steps data-autoplay="600" data-interactive aria-label="Three replicas of one CRDT document: hello handshake, missing operations, a local write and gossip">
+        <figcaption class="diagram-caption">
+          <span class="diagram-eyebrow">Sequence · defuss-crdt/1 wire</span>
+          <span class="diagram-title">Handshake, catch-up, then every write once everywhere</span>
+          <span class="diagram-dek">Each replica applies each operation once, deduplicated by (actor, seq), and ends in the same state.</span>
+        </figcaption>
+        <div class="diagram-canvas" style="--cols:3">
+          <div class="diagram-node" data-node="a" data-tone="accent" data-detail="A replica: createCrdtDocument({ id, schema, actorId }). It holds the operation set; the state is materialized from it.">
+            <span class="diagram-node-eyebrow">createCrdtDocument()</span>
+            <span class="diagram-node-name">Replica A</span>
+          </div>
+          <div class="diagram-node" data-node="b" data-detail="Replica B is attached to two channels: one to A, one to C.">
+            <span class="diagram-node-eyebrow">attached to A and C</span>
+            <span class="diagram-node-name">Replica B</span>
+          </div>
+          <div class="diagram-node" data-node="c" data-detail="Replica C has no channel to A, yet receives A's writes through B.">
+            <span class="diagram-node-eyebrow">no channel to A</span>
+            <span class="diagram-node-name">Replica C</span>
+          </div>
+          <ol class="diagram-edges">
+            <li class="diagram-edge" data-from="a" data-to="b" data-detail="Sent by both sides as soon as the channel opens: protocol defuss-crdt/1, docId, actorId, the canonical schema, its fingerprint and the version vector (the highest contiguous seq per actor).">hello · schema + version vector</li>
+            <li class="diagram-edge" data-from="b" data-to="b" data-detail="Exact canonical schema equality gates synchronization. A different schema rejects the channel with SCHEMA_MISMATCH instead of merging nonsense.">same schema? else SCHEMA_MISMATCH</li>
+            <li class="diagram-edge" data-from="b" data-to="a" data-line="dashed" data-head="open">hello (reply) · its vector</li>
+            <li class="diagram-edge" data-from="b" data-to="a" data-detail="Every operation whose seq is above the other side's vector entry for that actor, in causal order, chunked to stay under 64 KiB per message.">ops A lacks</li>
+            <li class="diagram-edge" data-from="a" data-to="b">ops B lacks</li>
+            <li class="diagram-edge" data-from="a" data-to="a" data-detail="doc.set(), doc.increment(), doc.setAdd(), doc.listInsert() … each records one immutable operation with the next seq and a Lamport clock.">local write → op (a, seq)</li>
+            <li class="diagram-edge" data-from="a" data-to="b" data-tone="accent" data-flow="1600">ops [new op]</li>
+            <li class="diagram-edge" data-from="b" data-to="c" data-tone="accent" data-flow="1600" data-detail="Newly learned operations are forwarded to the replica's other channels: gossip turns pairwise channels into a mesh.">gossip to the other channels</li>
+            <li class="diagram-edge" data-from="c" data-to="c">apply once · dedup by (actor, seq)</li>
+          </ol>
+        </div>
+      </figure>
+      <output class="wr-flow-detail" data-diagram-for="flow-crdt">Click a box or an arrow to read what it does.</output>
+    </div>
+
+    <div class="wr-how-grid">
+      <div>
+        <h3 class="wr-subtitle">What heals by itself</h3>
+        <ul class="wr-outcomes">
+          <li class="wr-outcome"><span class="badge" data-variant="secondary">lost link</span><p>Network drop, sleep, ICE failure: the data channel and <code>connectionState</code> notice, and the later joiner of the pair offers again, with backoff.</p></li>
+          <li class="wr-outcome"><span class="badge" data-variant="secondary">offline</span><p>Signaling pauses, writing goes on. The <code>online</code> event resyncs at once, and the CRDT merges what both sides wrote while apart.</p></li>
+          <li class="wr-outcome"><span class="badge" data-variant="secondary">hidden tab</span><p>Polls every 15 seconds instead of every 2, well inside the server's 90-second presence timeout, and resyncs the moment it is visible.</p></li>
+          <li class="wr-outcome"><span class="badge" data-variant="outline">dropped</span><p>A tab the server timed out (asleep for more than 90 seconds) notices that it is missing from <code>members[]</code> and rejoins on its own.</p></li>
+        </ul>
+        <p class="wr-note">The demo's reconnection logic, tested in real Chromium peers by <code>e2e/browser/chat.spec.mjs</code>.</p>
+      </div>
+      <div>
+        <h3 class="wr-subtitle">Two ways, one result</h3>
+        <ol class="mk-process-steps">
+          <li class="mk-process-step">
+            <span class="mk-process-step-number" aria-hidden="true">01</span>
+            <div class="mk-process-step-body">
+              <h4 class="mk-process-step-title">An offer bundle</h4>
+              <p class="mk-process-step-desc">Peer A creates it after ICE gathering is complete.</p>
+            </div>
+          </li>
+          <li class="mk-process-step">
+            <span class="mk-process-step-number" aria-hidden="true">02</span>
+            <div class="mk-process-step-body">
+              <h4 class="mk-process-step-title">It reaches Peer B</h4>
+              <p class="mk-process-step-desc">By hand as a file, or through the room server.</p>
+            </div>
+          </li>
+          <li class="mk-process-step">
+            <span class="mk-process-step-number" aria-hidden="true">03</span>
+            <div class="mk-process-step-body">
+              <h4 class="mk-process-step-title">An answer bundle travels back</h4>
+              <p class="mk-process-step-desc">The same way. Peer A imports it.</p>
+            </div>
+          </li>
+          <li class="mk-process-step">
+            <span class="mk-process-step-number" aria-hidden="true">04</span>
+            <div class="mk-process-step-body">
+              <h4 class="mk-process-step-title">The data channel opens</h4>
+              <p class="mk-process-step-desc">Both modes are identical from here: traffic flows peer to peer, and the CRDT syncs over it.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
     </div>
   </section>
 
-  <section class="card">
-    <div class="card-header">
-      <h2 class="card-title">4. Save / restore state</h2>
-      <p class="card-description">
-        <em>Save state</em> downloads your identity plus the full CRDT chat history as JSON.
-        Uploading such a file via <em>Restore state</em> impersonates that peer: you continue
-        with their peer id, nickname and exact chat state.
-      </p>
-    </div>
-    <div class="card-content">
-      <div class="flex flex-wrap items-end gap-3">
-        <button class="btn" data-variant="default" id="save-state">Save state</button>
-        <div class="form-field flex-1">
-          <label class="label" for="state-file">Restore state</label>
-          <input class="file-input" id="state-file" type="file" accept="application/json,.json">
+  <section id="server" class="container wr-section parallax-reveal" aria-labelledby="server-title">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Signaling server</span>
+        <h2 class="mk-section-header-title" id="server-title">🛰️ Host the room server yourself</h2>
+        <p class="mk-section-header-desc">The repository ships two interchangeable implementations of one protocol, <a href="https://github.com/kyr0/defuss-webrtc/blob/main/server/PROTOCOL.md">server/PROTOCOL.md</a>, and one conformance suite (<code>e2e/signaling.test.mjs</code>) that runs against any deployment. Both return identical responses; they differ in where a room lives and how it expires. The demo above uses the hosted Vercel deployment.</p>
+      </div>
+    </header>
+
+    <div class="tabs wr-tabs">
+      <div class="tab-list" role="tablist" aria-label="Signaling server implementations" data-size="lg">
+        <button class="tab-trigger" role="tab" aria-selected="true" aria-controls="host-node" id="tab-node"><svg class="wr-icon" aria-hidden="true"><use href="#i-server"/></svg>Node.js (Express)</button>
+        <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="host-vercel" id="tab-vercel" tabindex="-1"><svg class="wr-icon" aria-hidden="true"><use href="#i-globe"/></svg>Vercel (serverless)</button>
+      </div>
+
+      <div class="tab-content wr-host" role="tabpanel" id="host-node" aria-labelledby="tab-node" tabindex="0">
+        <div class="wr-host-grid">
+          <dl class="wr-dl">
+            <div><dt>Where rooms live</dt><dd>In the memory of one Node.js process: a <code>RoomStore</code> holds a <code>Map</code> of rooms, and each room holds <code>Map</code>s of members (by <code>peerId</code>), offers and answers (by <code>sessionId</code>). A restart empties it.</dd></div>
+            <div><dt>Atomic writes</dt><dd>Every request runs synchronously against those maps on one event loop, so a join or an answer is never half done.</dd></div>
+            <div><dt>Expiry</dt><dd>A timer sweeps every 30 seconds: members silent for 90 seconds leave (with the full cascade below), offers and answers older than 120 seconds go.</dd></div>
+            <div><dt>Scaling</dt><dd>One process. Two instances would each know only their own rooms, which is why the serverless port moved the state out of the process.</dd></div>
+            <div><dt>Configuration</dt><dd><code>PORT</code> (default 8787) and an optional <code>SERVER_PASSWORD</code>. JSON bodies up to 256&nbsp;kB, CORS open to every origin.</dd></div>
+          </dl>
+          <div class="wr-host-side">
+            <figure class="diagram wr-arch" data-type="architecture" aria-label="Browsers poll one Express process that keeps rooms in memory">
+              <div class="diagram-canvas" style="--cols:2">
+                <div class="diagram-node" data-node="peers" style="--col:1;--row:1"><span class="diagram-node-eyebrow">Peers</span><span class="diagram-node-name">Browsers</span><span class="diagram-node-meta">poll every 2 s</span></div>
+                <div class="diagram-group" data-node="proc" style="--col:2;--row:1;--rspan:2"><span class="diagram-group-label">server/ · one Node.js process</span></div>
+                <div class="diagram-node" data-node="express" data-tone="link" style="--col:2;--row:1"><span class="diagram-node-eyebrow">Express</span><span class="diagram-node-name">/v1 routes</span></div>
+                <div class="diagram-node" data-node="store" data-shape="store" data-tone="accent" style="--col:2;--row:2"><span class="diagram-node-eyebrow">in memory</span><span class="diagram-node-name">RoomStore</span><span class="diagram-node-meta">Map&lt;name, Room&gt;</span></div>
+                <div class="diagram-node" data-node="sweep" style="--col:1;--row:2"><span class="diagram-node-eyebrow">setInterval</span><span class="diagram-node-name">sweep()</span><span class="diagram-node-meta">every 30 s</span></div>
+              </div>
+              <ol class="diagram-edges">
+                <li class="diagram-edge" data-from="peers" data-to="express" data-flow>HTTP JSON</li>
+                <li class="diagram-edge" data-from="express" data-to="store"></li>
+                <li class="diagram-edge" data-from="sweep" data-to="store" data-line="dashed">90 s · 120 s</li>
+              </ol>
+            </figure>
+            <figure class="mk-code-block" data-variant="file">
+              <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-terminal"/></svg>server/</span><button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+              <pre><code><span>cd server &amp;&amp; npm install</span><span>npm run dev                      <span class="mk-code-block-c"># tsx watch on http://localhost:8787</span></span><span>npm run build &amp;&amp; npm start      <span class="mk-code-block-c"># production: node dist/index.js</span></span><span>SERVER_PASSWORD=… PORT=8787 npm start</span></code></pre>
+              <span class="mk-code-block-status" role="status"></span>
+            </figure>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-content wr-host" role="tabpanel" id="host-vercel" aria-labelledby="tab-vercel" tabindex="0" hidden>
+        <div class="wr-host-grid">
+          <dl class="wr-dl">
+            <div><dt>Where rooms live</dt><dd>In Upstash Redis, through its REST API. Each room is one JSON document <code>{ revision, room }</code> under <code>{defuss-webrtc}:room:&lt;name&gt;</code>; the sorted set <code>{defuss-webrtc}:rooms</code> lists the rooms by <code>createdAt</code>.</dd></div>
+            <div><dt>Atomic writes</dt><dd>Each mutation is computed in TypeScript and committed by a Lua compare-and-swap on the revision, room and index in one script. A writer that lost the race retries from the newest revision, up to 24 times. Reads run as Lua on the primary, so a lagging replica cannot hide a fresh room.</dd></div>
+            <div><dt>Expiry</dt><dd>Lazy: every room access and every room listing sweeps first (members after 90 seconds, offers and answers after 120). Room keys also expire 180 seconds after their last write, as a safety net for dead rooms.</dd></div>
+            <div><dt>Scaling</dt><dd>Stateless function instances share one Redis. <code>vercel.json</code> pins the function to <code>fra1</code>; keep it next to the Redis primary.</dd></div>
+            <div><dt>Configuration</dt><dd><code>UPSTASH_REDIS_REST_URL</code> + <code>UPSTASH_REDIS_REST_TOKEN</code> (or <code>KV_REST_API_URL</code> + <code>KV_REST_API_TOKEN</code> from the Vercel Marketplace), and an optional <code>SERVER_PASSWORD</code>.</dd></div>
+          </dl>
+          <div class="wr-host-side">
+            <figure class="diagram wr-arch" data-type="architecture" aria-label="Browsers call stateless Vercel Functions that keep rooms in Upstash Redis">
+              <div class="diagram-canvas" style="--cols:2">
+                <div class="diagram-node" data-node="peers" style="--col:1;--row:1"><span class="diagram-node-eyebrow">Peers</span><span class="diagram-node-name">Browsers</span><span class="diagram-node-meta">poll every 2 s</span></div>
+                <div class="diagram-node" data-node="fn" data-tone="link" style="--col:2;--row:1"><span class="diagram-node-eyebrow">vercel/api · fra1</span><span class="diagram-node-name">Vercel Function</span><span class="diagram-node-meta">stateless · 10 s max</span></div>
+                <div class="diagram-node" data-node="redis" data-shape="store" data-tone="accent" style="--col:2;--row:2"><span class="diagram-node-eyebrow">Upstash Redis</span><span class="diagram-node-name">room JSON + index</span><span class="diagram-node-meta">Lua CAS · key TTL 180 s</span></div>
+                <div class="diagram-node" data-node="sweep" style="--col:1;--row:2"><span class="diagram-node-eyebrow">on every access</span><span class="diagram-node-name">lazy sweep</span><span class="diagram-node-meta">90 s · 120 s</span></div>
+              </div>
+              <ol class="diagram-edges">
+                <li class="diagram-edge" data-from="peers" data-to="fn" data-flow>HTTP JSON</li>
+                <li class="diagram-edge" data-from="fn" data-to="redis" data-flow data-flow-delay="600">REST · EVAL</li>
+                <li class="diagram-edge" data-from="sweep" data-to="redis" data-line="dashed"></li>
+              </ol>
+            </figure>
+            <figure class="mk-code-block" data-variant="file">
+              <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-terminal"/></svg>vercel/</span><button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+              <pre><code><span><span class="mk-code-block-c"># Vercel project with Root Directory = vercel, plus an Upstash Redis</span></span><span>cd vercel &amp;&amp; npm install</span><span>npx vercel                       <span class="mk-code-block-c"># deploy; /v1 stays the public base</span></span><span>npx vercel dev                   <span class="mk-code-block-c"># local, with Redis credentials in .env.local</span></span></code></pre>
+              <span class="mk-code-block-status" role="status"></span>
+            </figure>
+          </div>
         </div>
       </div>
     </div>
+
+    <div class="wr-model" id="model">
+      <h3 class="wr-subtitle">🗂️ What a room holds</h3>
+      <p class="wr-lead">A room is a named rendezvous point: who is in it, and the offers and answers in flight between them. It is a channel for <em>signaling</em> only. Messages never pass through it: every pair of members gets its own <code>RTCDataChannel</code>, and the demo's CRDT document, named after the room, syncs over those channels. Both servers store exactly this model; <code>GET /v1/rooms</code> shows only name, member count, <code>createdAt</code> and whether the room is protected.</p>
+      <figure class="diagram wr-er" id="room-model" data-type="er" data-steps data-autoplay="400" data-interactive aria-label="The room data model: a room has members; members send offers to members; an answer consumes its offer; offers and answers carry signal bundles">
+        <figcaption class="diagram-caption">
+          <span class="diagram-eyebrow">ER · signaling data model</span>
+          <span class="diagram-title">Room, member, offer, answer</span>
+          <span class="diagram-dek"># marks an identifier, → a reference. Click an entity for its lifetime.</span>
+        </figcaption>
+        <div class="diagram-canvas" style="--cols:3;--diagram-gap-y:4rem">
+          <div class="diagram-node" data-node="room" data-tone="accent" style="--col:1;--row:1" data-detail="Created by POST /v1/rooms/{name}; the creator becomes moderator. A room password is fixed at creation and stored only as a salted HMAC-SHA256. The room is deleted when its last member leaves or times out.">
+            <span class="diagram-node-eyebrow">Entity</span>
+            <span class="diagram-node-name">Room</span>
+            <ul class="diagram-node-fields">
+              <li># name</li>
+              <li>createdAt</li>
+              <li>password hash?</li>
+            </ul>
+          </div>
+          <div class="diagram-node" data-node="member" style="--col:2;--row:1" data-detail="Added by create or join, unique per room by peerId. Every poll with ?peerId= renews lastSeen; after 90 seconds without one, the member is removed with everything it sent or was sent.">
+            <span class="diagram-node-eyebrow">Entity</span>
+            <span class="diagram-node-name">Member</span>
+            <ul class="diagram-node-fields">
+              <li># peerId</li>
+              <li>nickname</li>
+              <li>role</li>
+              <li>joinedAt</li>
+              <li>lastSeen</li>
+            </ul>
+          </div>
+          <div class="diagram-node" data-node="offer" style="--col:1;--row:2" data-detail="Addressed to exactly one member. Stored by a join (one per existing member) or a late offer (mesh repair). Gone when answered, after 120 seconds, or when either peer leaves.">
+            <span class="diagram-node-eyebrow">Entity</span>
+            <span class="diagram-node-name">Offer</span>
+            <ul class="diagram-node-fields">
+              <li># sessionId</li>
+              <li>→ from</li>
+              <li>→ to</li>
+              <li>bundle</li>
+              <li>createdAt</li>
+            </ul>
+          </div>
+          <div class="diagram-node" data-node="answer" style="--col:2;--row:2" data-detail="Stored under its offer's sessionId, while the offer is deleted in the same atomic step. Posting it again is a 201 no-op. Gone after 120 seconds or when either peer leaves.">
+            <span class="diagram-node-eyebrow">Entity</span>
+            <span class="diagram-node-name">Answer</span>
+            <ul class="diagram-node-fields">
+              <li># sessionId</li>
+              <li>→ from</li>
+              <li>→ to</li>
+              <li>bundle</li>
+              <li>createdAt</li>
+            </ul>
+          </div>
+          <div class="diagram-node" data-node="bundle" style="--col:3;--row:2" data-detail="Opaque to the server, which checks only kind, sessionId and that peerId equals the sender. With defuss-webrtc it is a SignalBundle: complete SDP, candidates, public endpoints and metadata such as the nickname.">
+            <span class="diagram-node-eyebrow">Value</span>
+            <span class="diagram-node-name">Signal bundle</span>
+            <ul class="diagram-node-fields">
+              <li>kind</li>
+              <li>sessionId</li>
+              <li>peerId</li>
+              <li>description</li>
+              <li>candidates</li>
+            </ul>
+          </div>
+        </div>
+        <ol class="diagram-edges">
+          <li class="diagram-edge" data-from="room" data-to="member" data-head="one-many" data-tail="one" data-from-label="1" data-to-label="1..*">has</li>
+          <li class="diagram-edge" data-from="room" data-to="offer" data-head="zero-many" data-tail="one" data-from-label="1" data-to-label="0..*">holds</li>
+          <li class="diagram-edge" data-from="member" data-to="offer" data-head="zero-many" data-tail="one" data-from-label="1" data-to-label="0..*">sends · receives</li>
+          <li class="diagram-edge" data-from="offer" data-to="answer" data-head="zero-one" data-tail="one" data-from-label="1" data-to-label="0..1">consumed by</li>
+          <li class="diagram-edge" data-from="answer" data-to="bundle" data-head="one" data-tail="one">carries</li>
+        </ol>
+      </figure>
+      <output class="wr-flow-detail" data-diagram-for="room-model">Click an entity or a relation.</output>
+
+      <div class="table-container wr-lifetime">
+        <table class="table wr-table">
+          <caption class="sr-only">How long each record lives on the signaling server</caption>
+          <thead><tr class="table-row"><th class="table-head" scope="col">Record</th><th class="table-head" scope="col">Created by</th><th class="table-head" scope="col">Lives until</th></tr></thead>
+          <tbody>
+            <tr class="table-row"><td class="table-cell">Room</td><td class="table-cell"><code>POST /v1/rooms/{name}</code></td><td class="table-cell">Its last member leaves or times out. On Vercel the key also expires 180&nbsp;s after its last write.</td></tr>
+            <tr class="table-row"><td class="table-cell">Member</td><td class="table-cell">create or <code>POST …/join</code></td><td class="table-cell"><code>POST …/leave</code>, or 90&nbsp;s without a poll. Removal cascades: its offers and answers go, the moderator role moves on, an empty room is deleted.</td></tr>
+            <tr class="table-row"><td class="table-cell">Offer</td><td class="table-cell"><code>…/join</code> or a late <code>POST …/offers</code></td><td class="table-cell">Its answer consumes it, it is 120&nbsp;s old, or either peer leaves.</td></tr>
+            <tr class="table-row"><td class="table-cell">Answer</td><td class="table-cell"><code>POST …/answers</code></td><td class="table-cell">It is 120&nbsp;s old, or either peer leaves.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="wr-rules">
+        <article class="card wr-rule">
+          <div class="card-header">
+            <h4 class="card-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-shield"/></svg>Moderation</h4>
+            <p class="card-description">The creator is the moderator, and every room has exactly one. When the moderator leaves or times out, the remaining member with the smallest <code>joinedAt</code> takes over. The role grants no extra endpoint: it marks the longest-standing member, and the demo shows it as ★.</p>
+          </div>
+        </article>
+        <article class="card wr-rule">
+          <div class="card-header">
+            <h4 class="card-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-logo"/></svg>Full mesh</h4>
+            <p class="card-description">The joiner offers to every member, so N members hold N·(N−1)/2 connections. When two peers join at the same moment and miss each other, the one with the later <code>joinedAt</code> sends a late offer.</p>
+          </div>
+        </article>
+        <article class="card wr-rule">
+          <div class="card-header">
+            <h4 class="card-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-sync"/></svg>Presence</h4>
+            <p class="card-description">There is no push: peers poll <code>GET …/members?peerId=…</code>, and each poll is the heartbeat. A peer that finds itself missing from <code>members[]</code> was timed out and must leave locally; the demo rejoins.</p>
+          </div>
+        </article>
+        <article class="card wr-rule">
+          <div class="card-header">
+            <h4 class="card-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-lock"/></svg>Passwords</h4>
+            <p class="card-description">Optional and independent: a server password in <code>X-Server-Password</code>, a room password in <code>X-Room-Password</code>. They gate who may use a server or room, but there is no per-member login and <code>peerId</code> is self-asserted: terminate TLS and rate-limit public deployments.</p>
+          </div>
+        </article>
+      </div>
+    </div>
   </section>
 
-  <section class="card">
-    <div class="card-header">
-      <h2 class="card-title">Log</h2>
-    </div>
-    <div class="card-content">
-      <pre id="log" class="scroll-area"></pre>
+  <section id="explorer" class="container wr-section parallax-reveal" aria-labelledby="explorer-title">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">CRDT explorer</span>
+        <h2 class="mk-section-header-title" id="explorer-title">🧪 Edit two replicas offline, then merge them</h2>
+        <p class="mk-section-header-desc">Two replicas of one CRDT document start from the same state, lose their connection, and change it independently. <strong>Merge</strong> hands each replica what it lacks, exactly what <code>attach()</code> sends after the hello, and both end up identical. The calls run in your browser, on the <code>defuss-webrtc</code> build this page ships.</p>
+      </div>
+    </header>
+
+    <article class="card wr-explorer">
+      <div class="wr-step">
+        <div class="wr-step-head">
+          <h3 class="wr-step-title"><span class="wr-step-number" aria-hidden="true">1</span>Schema and shared start</h3>
+        </div>
+        <p class="wr-step-hint">Each line is one call on the document, as JSON: <code>["method", ...arguments]</code>. <code>["set", ["title"], "Notes"]</code> runs <code>doc.set(["title"], "Notes")</code>. Methods: <code>set</code>, <code>increment</code>, <code>setAdd</code>, <code>setDelete</code>, <code>mapDelete</code>, <code>listInsert</code>, <code>listSet</code>, <code>listDelete</code>.</p>
+        <div class="wr-editors">
+          <figure class="mk-code-block wr-schema" data-variant="file">
+            <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-file"/></svg>schema.js (fixed)</span></div>
+            <pre><code><span><span class="mk-code-block-k">const</span> schema = defineSchema({</span><span>  title: register(<span class="mk-code-block-s">'Untitled'</span>),  <span class="mk-code-block-c">// last writer wins</span></span><span>  votes: counter(<span class="wr-json-literal">0</span>),            <span class="mk-code-block-c">// increments add up</span></span><span>  tags: orSet([]),              <span class="mk-code-block-c">// add wins over delete</span></span><span>  todos: map(object({           <span class="mk-code-block-c">// keys come and go</span></span><span>    text: register(<span class="mk-code-block-s">''</span>),</span><span>    done: register(<span class="wr-json-literal">false</span>),</span><span>  })),</span><span>  messages: list([]),           <span class="mk-code-block-c">// every insert survives</span></span><span>});</span></code></pre>
+          </figure>
+          <figure class="mk-code-block wr-editor" data-variant="file">
+            <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-braces"/></svg>shared.json · both replicas, before going offline</span></div>
+            <div class="wr-editor-body">
+              <pre class="wr-editor-view" aria-hidden="true"><code data-editor-view="base"></code></pre>
+              <textarea class="wr-editor-input" id="ex-base" data-editor="base" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Calls both replicas share before they go offline, as JSON"></textarea>
+            </div>
+          </figure>
+        </div>
+      </div>
+
+      <div class="wr-step">
+        <div class="wr-step-head">
+          <h3 class="wr-step-title"><span class="wr-step-number" aria-hidden="true">2</span>Offline edits</h3>
+        </div>
+        <div class="wr-examples" role="group" aria-label="Example scenarios" id="ex-presets">
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="mixed">everything at once</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="register">same register</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="counter">counter</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="set">add vs. delete</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="list">both append</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="map">delete vs. edit</button>
+          <button type="button" class="btn" data-variant="secondary" data-size="xs" data-preset="invalid">a call that fails</button>
+        </div>
+        <p class="wr-step-hint wr-preset-note" id="ex-note" aria-live="polite"></p>
+        <div class="wr-editors">
+          <figure class="mk-code-block wr-editor" data-variant="file">
+            <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-braces"/></svg>replica-a.json · offline</span></div>
+            <div class="wr-editor-body">
+              <pre class="wr-editor-view" aria-hidden="true"><code data-editor-view="a"></code></pre>
+              <textarea class="wr-editor-input" id="ex-a" data-editor="a" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Replica A's offline calls, as JSON"></textarea>
+            </div>
+          </figure>
+          <figure class="mk-code-block wr-editor" data-variant="file">
+            <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-braces"/></svg>replica-b.json · offline</span></div>
+            <div class="wr-editor-body">
+              <pre class="wr-editor-view" aria-hidden="true"><code data-editor-view="b"></code></pre>
+              <textarea class="wr-editor-input" id="ex-b" data-editor="b" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Replica B's offline calls, as JSON"></textarea>
+            </div>
+          </figure>
+        </div>
+        <div class="wr-apply">
+          <button type="button" class="btn" id="ex-merge"><svg class="wr-icon" aria-hidden="true"><use href="#i-merge"/></svg>Reconnect and merge</button>
+          <span class="wr-step-hint">or <kbd class="kbd-group"><kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">Enter</kbd></kbd> in an editor</span>
+          <span class="wr-step-hint wr-stale" id="ex-stale" role="status"></span>
+        </div>
+      </div>
+
+      <div class="wr-step">
+        <div class="wr-step-head">
+          <h3 class="wr-step-title"><span class="wr-step-number" aria-hidden="true">3</span>Merged</h3>
+          <span class="badge" id="ex-converged" data-variant="outline">not merged yet</span>
+        </div>
+        <div class="alert" data-variant="destructive" role="alert" id="ex-error" hidden>
+          <svg class="alert-icon wr-icon" aria-hidden="true"><use href="#i-alert"/></svg>
+          <div class="alert-content">
+            <h4 class="alert-title" id="ex-error-title">A call failed</h4>
+            <p class="alert-description" id="ex-error-message"></p>
+          </div>
+        </div>
+        <p class="wr-step-hint" id="ex-counts" aria-live="polite"></p>
+        <div class="tabs wr-result-tabs">
+          <div class="tab-list" role="tablist" aria-label="Merge result" data-size="sm">
+            <button class="tab-trigger" role="tab" aria-selected="true" aria-controls="res-merged" id="tab-res-merged">Merged state</button>
+            <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="res-a" id="tab-res-a" tabindex="-1">A before merge</button>
+            <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="res-b" id="tab-res-b" tabindex="-1">B before merge</button>
+            <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="res-wire" id="tab-res-wire" tabindex="-1">On the wire, A → B</button>
+          </div>
+          <div class="tab-content" role="tabpanel" id="res-merged" aria-labelledby="tab-res-merged" tabindex="0">
+            <figure class="mk-code-block wr-result" data-variant="file"><div class="mk-code-block-head"><span class="mk-code-block-file">a.state, after a.merge(b.export()) · equal to b.state</span></div><pre tabindex="0" aria-label="The merged state"><code id="res-merged-code"></code></pre></figure>
+          </div>
+          <div class="tab-content" role="tabpanel" id="res-a" aria-labelledby="tab-res-a" tabindex="0" hidden>
+            <figure class="mk-code-block wr-result" data-variant="file"><div class="mk-code-block-head"><span class="mk-code-block-file">a.state, offline</span></div><pre tabindex="0" aria-label="Replica A's state before the merge"><code id="res-a-code"></code></pre></figure>
+          </div>
+          <div class="tab-content" role="tabpanel" id="res-b" aria-labelledby="tab-res-b" tabindex="0" hidden>
+            <figure class="mk-code-block wr-result" data-variant="file"><div class="mk-code-block-head"><span class="mk-code-block-file">b.state, offline</span></div><pre tabindex="0" aria-label="Replica B's state before the merge"><code id="res-b-code"></code></pre></figure>
+          </div>
+          <div class="tab-content" role="tabpanel" id="res-wire" aria-labelledby="tab-res-wire" tabindex="0" hidden>
+            <figure class="mk-code-block wr-result" data-variant="file"><div class="mk-code-block-head"><span class="mk-code-block-file">the ops message A sends after B's hello: every op above B's version vector</span></div><pre tabindex="0" aria-label="The operations A sends to B"><code id="res-wire-code"></code></pre></figure>
+          </div>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <section id="api" class="container wr-section parallax-reveal" aria-labelledby="api-title">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">API</span>
+        <h2 class="mk-section-header-title" id="api-title">📚 Two entry points, plain JSON on every wire</h2>
+        <p class="mk-section-header-desc"><code>defuss-webrtc/webrtc</code> connects peers, <code>defuss-webrtc/crdt</code> syncs state; the package root exports both. Bundles, snapshots and wire messages are plain JSON. The declarations ship in <code>dist/</code>; the source of truth is <a href="https://github.com/kyr0/defuss-webrtc/tree/main/src">src/</a>.</p>
+      </div>
+    </header>
+
+    <div class="tabs wr-api">
+      <div class="tab-list" role="tablist" aria-label="API reference" data-size="lg">
+        <button class="tab-trigger" role="tab" aria-selected="true" aria-controls="api-peer" id="tab-peer">ManualPeer</button>
+        <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="api-bundle" id="tab-bundle" tabindex="-1">Signal bundle</button>
+        <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="api-http" id="tab-http" tabindex="-1">Room server HTTP</button>
+        <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="api-crdt" id="tab-crdt" tabindex="-1">CRDT document</button>
+        <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="api-wire" id="tab-wire" tabindex="-1">CRDT wire</button>
+      </div>
+
+      <div class="tab-content" role="tabpanel" id="api-peer" aria-labelledby="tab-peer" tabindex="0">
+        <p class="wr-api-lead">One <code>ManualPeer</code> is one <code>RTCPeerConnection</code> with one ordered data channel, for one pairing. Its bundles wait for complete ICE gathering, so no trickle ICE is needed.</p>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">Member</th><th class="table-head">Returns</th><th class="table-head">Semantics</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>new ManualPeer(options?)</code></td><td class="table-cell"><code>ManualPeer</code></td><td class="table-cell">Options: <code>peerId</code> (default random), <code>iceServers</code> (default <code>stun:stun.cloudflare.com:3478</code>), <code>rtcConfiguration</code>, <code>iceGatheringTimeoutMs</code> (15000), <code>channelLabel</code> (<code>"defuss"</code>), <code>channelOptions</code> (<code>ordered: true</code>).</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>createOffer({ metadata? })</code></td><td class="table-cell"><code>Promise&lt;OfferSignalBundle&gt;</code></td><td class="table-cell">Creates the data channel and the offer; resolves after ICE gathering. <code>metadata</code> is a string record, e.g. a nickname.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>acceptOffer(offer, { metadata? })</code></td><td class="table-cell"><code>Promise&lt;AnswerSignalBundle&gt;</code></td><td class="table-cell">Takes a bundle or its JSON text; answers it.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>acceptAnswer(answer)</code></td><td class="table-cell"><code>Promise&lt;void&gt;</code></td><td class="table-cell">Completes the offerer's side.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>waitForOpen(timeoutMs = 20000)</code></td><td class="table-cell"><code>Promise&lt;RTCDataChannel&gt;</code></td><td class="table-cell">The data channel once it is open.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>waitForDataChannel(timeoutMs = 20000)</code></td><td class="table-cell"><code>Promise&lt;RTCDataChannel&gt;</code></td><td class="table-cell">The data channel as soon as it exists, open or not.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>peerId</code>, <code>connection</code>, <code>dataChannel</code></td><td class="table-cell">properties</td><td class="table-cell">The logical peer identity, the <code>RTCPeerConnection</code>, the channel or <code>null</code>.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>close()</code></td><td class="table-cell"><code>void</code></td><td class="table-cell">Closes the channel and the connection.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-content" role="tabpanel" id="api-bundle" aria-labelledby="tab-bundle" tabindex="0" hidden>
+        <p class="wr-api-lead">The JSON both signaling modes carry. It is session state: SDP, ICE credentials, candidate addresses and DTLS fingerprints. Treat it as short-lived and sensitive.</p>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">Field</th><th class="table-head">Type</th><th class="table-head">Meaning</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>protocol</code>, <code>version</code></td><td class="table-cell"><code>"defuss-webrtc/manual-signal/1"</code>, <code>1</code></td><td class="table-cell">Format identification; <code>parseSignalBundle()</code> rejects anything else.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>kind</code></td><td class="table-cell"><code>"offer" | "answer"</code></td><td class="table-cell">Which half of the exchange.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>sessionId</code>, <code>peerId</code></td><td class="table-cell">strings</td><td class="table-cell">The pairing and the sender. An answer adds <code>replyTo</code>, the offer's <code>sessionId</code>.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>description</code></td><td class="table-cell"><code>RTCSessionDescriptionInit</code></td><td class="table-cell">Complete SDP after ICE gathering.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>candidates</code>, <code>publicEndpoints</code></td><td class="table-cell">arrays</td><td class="table-cell">Parsed ICE candidates, and the STUN-derived (srflx) addresses. An IP address is a network locator, not a peer identity.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>createdAt</code>, <code>metadata?</code></td><td class="table-cell">ISO string, string record</td><td class="table-cell">Creation time; free metadata such as a nickname.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="wr-api-lead">Helpers: <code>parseSignalBundle(input)</code>, <code>serializeSignalBundle(bundle, pretty = true)</code>, <code>signalFileName(bundle)</code>, <code>downloadSignalBundle(bundle, filename?)</code>, <code>readSignalFile(file)</code>, and the candidate parsers <code>parseIceCandidate</code>, <code>extractIceCandidates</code>, <code>getServerReflexiveEndpoints</code>.</p>
+      </div>
+
+      <div class="tab-content" role="tabpanel" id="api-http" aria-labelledby="tab-http" tabindex="0" hidden>
+        <p class="wr-api-lead">Base path <code>/v1</code>, JSON in and out, CORS open. Errors are <code>{ "error": "CODE", "message": "…" }</code>; clients branch on <code>error</code>. Room names match <code>^[a-zA-Z0-9_-]{1,64}$</code>.</p>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">Endpoint</th><th class="table-head">Body</th><th class="table-head">Success</th><th class="table-head">Errors</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>GET /v1/rooms</code></td><td class="table-cell">–</td><td class="table-cell"><code>200</code> room summaries by <code>createdAt</code></td><td class="table-cell"><code>401</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>POST /v1/rooms/{name}</code></td><td class="table-cell"><code>{ peerId, nickname, password? }</code></td><td class="table-cell"><code>201</code> room state; caller is moderator</td><td class="table-cell"><code>409 ROOM_EXISTS</code>, <code>400 BAD_*</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>POST …/{name}/join</code></td><td class="table-cell"><code>{ peerId, nickname, offers: [{ to, bundle }] }</code></td><td class="table-cell"><code>200</code> room state</td><td class="table-cell"><code>404 ROOM_NOT_FOUND</code>, <code>409 ALREADY_JOINED</code>, <code>400 BAD_OFFERS</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>GET …/{name}/members?peerId=</code></td><td class="table-cell">–</td><td class="table-cell"><code>200</code> room state; renews <code>lastSeen</code></td><td class="table-cell"><code>404 ROOM_NOT_FOUND</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>POST …/{name}/offers</code></td><td class="table-cell"><code>{ from, to, bundle }</code></td><td class="table-cell"><code>201</code> (mesh repair)</td><td class="table-cell"><code>409 OFFER_EXISTS</code>, <code>404 NOT_A_MEMBER</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>POST …/{name}/answers</code></td><td class="table-cell"><code>{ from, to, sessionId, bundle }</code></td><td class="table-cell"><code>201</code>; consumes the offer, idempotent</td><td class="table-cell"><code>404 OFFER_NOT_FOUND</code>, <code>400 ANSWER_MISMATCH</code></td></tr>
+              <tr class="table-row"><td class="table-cell"><code>POST …/{name}/leave</code></td><td class="table-cell"><code>{ peerId }</code></td><td class="table-cell"><code>200</code>; cascades as described above</td><td class="table-cell"><code>404 NOT_A_MEMBER</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="wr-api-lead">With a server password, every request sends <code>X-Server-Password</code>; a protected room needs <code>X-Room-Password</code> on every <code>/v1/rooms/{name}/*</code> request (values percent-encoded), else <code>401</code>.</p>
+      </div>
+
+      <div class="tab-content" role="tabpanel" id="api-crdt" aria-labelledby="tab-crdt" tabindex="0" hidden>
+        <p class="wr-api-lead"><code>createCrdtDocument({ id, schema, actorId?, maxMessageBytes = 65536, maxBufferedAmount = 524288 })</code> returns a document. The schema decides the merge rule per path:</p>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">Schema node</th><th class="table-head">Mutations</th><th class="table-head">Merge semantics</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>register(initial)</code></td><td class="table-cell"><code>set(path, value)</code></td><td class="table-cell">Lamport last-writer-wins; <code>(clock, actor, seq)</code> breaks ties.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>counter(initial)</code></td><td class="table-cell"><code>increment(path, delta = 1)</code></td><td class="table-cell">Unique, immutable deltas, each summed once.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>orSet(initial)</code></td><td class="table-cell"><code>setAdd</code>, <code>setDelete</code></td><td class="table-cell">Observed-remove: an add wins over a concurrent delete.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>map(valueSchema)</code></td><td class="table-cell">nested writes, <code>mapEnsure</code>, <code>mapDelete</code></td><td class="table-cell">Last-writer-wins key lifecycle; a re-put starts a fresh nested generation.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>object(fields)</code></td><td class="table-cell">child writes</td><td class="table-cell">A static container of fields.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>list(initial)</code></td><td class="table-cell"><code>listInsert</code>, <code>listSet</code>, <code>listDelete</code></td><td class="table-cell">RGA-style: immutable element ids plus tombstones.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">Document member</th><th class="table-head">Semantics</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>state</code>, <code>get(path)</code></td><td class="table-cell">The materialized JSON, as a fresh copy; one path of it.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>subscribe(listener)</code></td><td class="table-cell">Called with <code>{ origin: 'local' | 'remote' | 'import', ops, state }</code>; returns an unsubscribe function. <code>onError(listener)</code> reports wire and schema errors.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>batch(fn)</code></td><td class="table-cell">Several writes, one broadcast and one notification.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>attach(channel)</code></td><td class="table-cell">Syncs over a reliable, ordered <code>RTCDataChannel</code> (any number of them); returns <code>detach</code>. <code>close()</code> detaches all.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>export()</code>, <code>merge(snapshot)</code></td><td class="table-cell">The operation set as a JSON snapshot; merging returns how many operations were new.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>versionVector</code>, <code>operationCount</code></td><td class="table-cell">The highest contiguous <code>seq</code> per actor; the number of operations held.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-content" role="tabpanel" id="api-wire" aria-labelledby="tab-wire" tabindex="0" hidden>
+        <p class="wr-api-lead">Every message on a data channel is a UTF-8 JSON string with <code>protocol: "defuss-crdt/1"</code> and the <code>docId</code>; messages for another document or protocol reject the channel.</p>
+        <div class="table-container">
+          <table class="table wr-table">
+            <thead><tr class="table-row"><th class="table-head">kind</th><th class="table-head">Fields</th><th class="table-head">When</th></tr></thead>
+            <tbody>
+              <tr class="table-row"><td class="table-cell"><code>hello</code></td><td class="table-cell"><code>actorId</code>, <code>schema</code> (canonical), <code>schemaFingerprint</code>, <code>vector</code>, <code>reply</code></td><td class="table-cell">On open by both sides; a non-reply hello gets a reply hello, and either one triggers the missing operations.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>ops</code></td><td class="table-cell"><code>ops: CrdtOp[]</code>, each with <code>id</code>, <code>actor</code>, <code>seq</code>, <code>clock</code>, <code>kind</code>, <code>path</code></td><td class="table-cell">Catch-up, every local write, and gossip of newly learned operations; chunked under <code>maxMessageBytes</code>.</td></tr>
+              <tr class="table-row"><td class="table-cell"><code>error</code></td><td class="table-cell"><code>code</code>, <code>message</code></td><td class="table-cell">Before a side rejects the channel, e.g. <code>SCHEMA_MISMATCH</code>; the other side reports <code>REMOTE_&lt;code&gt;</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="wr-api-lead">A snapshot from <code>export()</code> is <code>{ protocol: "defuss-crdt/snapshot/1", docId, schema, schemaFingerprint, ops }</code>. It holds every operation, so it grows with the writes; compaction is not implemented in 0.1.</p>
+      </div>
     </div>
   </section>
-</main>
-<script type="module" src="https://cdn.jsdelivr.net/gh/kyr0/defuss-shadcn@0.9.1/dist/components/all.min.js"></script>
-<script type="module" src="app.js"></script>
+
+  <section id="install" class="container wr-section parallax-reveal" aria-labelledby="install-title">
+    <div class="corner-leaf pattern-dots wr-use">
+    <header class="mk-section-header">
+      <div class="mk-section-header-copy">
+        <span class="mk-section-header-eyebrow">Install</span>
+        <h2 class="mk-section-header-title" id="install-title">🧑‍💻 Add it to your app</h2>
+        <p class="mk-section-header-desc">Install it from npm, or import it straight from a CDN. Then pick a signaling mode, attach a CRDT document, or hand one prompt to your coding agent.</p>
+      </div>
+    </header>
+    <div class="wr-ways">
+      <div class="wr-way">
+        <h3 class="wr-way-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-package"/></svg>From npm</h3>
+        <p class="wr-way-desc">ES modules with TypeScript declarations: <code>defuss-webrtc</code>, <code>defuss-webrtc/webrtc</code> and <code>defuss-webrtc/crdt</code>. No runtime dependencies.</p>
+        <figure class="mk-code-block">
+          <div class="mk-code-block-head">
+            <div class="mk-code-block-tabs" role="radiogroup" aria-label="Package manager">
+              <label><input type="radio" name="cb-pm" value="npm" checked>npm</label><label><input type="radio" name="cb-pm" value="pnpm">pnpm</label><label><input type="radio" name="cb-pm" value="bun">bun</label>
+            </div>
+            <button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+          </div>
+          <pre data-tab="npm"><code><span>npm install defuss-webrtc</span></code></pre>
+          <pre data-tab="pnpm"><code><span>pnpm add defuss-webrtc</span></code></pre>
+          <pre data-tab="bun"><code><span>bun add defuss-webrtc</span></code></pre>
+          <span class="mk-code-block-status" role="status"></span>
+        </figure>
+      </div>
+      <div class="separator wr-sep-vertical" data-orientation="vertical" role="separator"></div>
+      <hr class="separator wr-sep-horizontal">
+      <div class="wr-way">
+        <h3 class="wr-way-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-globe"/></svg>In the browser, no bundler</h3>
+        <p class="wr-way-desc">The published <code>dist/</code> is plain ES modules, so an import map pointing at jsDelivr is enough.</p>
+        <figure class="mk-code-block" data-variant="file">
+          <div class="mk-code-block-head"><span class="mk-code-block-file"><svg class="wr-icon" aria-hidden="true"><use href="#i-file"/></svg>index.html</span><button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+          <pre><code><span><span class="mk-code-block-k">&lt;script</span> type=<span class="mk-code-block-s">"importmap"</span><span class="mk-code-block-k">&gt;</span></span><span>{ <span class="mk-code-block-s">"imports"</span>: {</span><span>  <span class="mk-code-block-s">"defuss-webrtc/webrtc"</span>: <span class="mk-code-block-s">"https://cdn.jsdelivr.net/npm/defuss-webrtc@0.1.0/dist/webrtc/index.js"</span>,</span><span>  <span class="mk-code-block-s">"defuss-webrtc/crdt"</span>: <span class="mk-code-block-s">"https://cdn.jsdelivr.net/npm/defuss-webrtc@0.1.0/dist/crdt/index.js"</span></span><span>} }</span><span><span class="mk-code-block-k">&lt;/script&gt;</span></span><span><span class="mk-code-block-k">&lt;script</span> type=<span class="mk-code-block-s">"module"</span><span class="mk-code-block-k">&gt;</span></span><span>  <span class="mk-code-block-k">import</span> { ManualPeer } <span class="mk-code-block-k">from</span> <span class="mk-code-block-s">'defuss-webrtc/webrtc'</span>;</span><span><span class="mk-code-block-k">&lt;/script&gt;</span></span></code></pre>
+          <span class="mk-code-block-status" role="status"></span>
+        </figure>
+      </div>
+    </div>
+
+    <div class="wr-usage">
+      <h3 class="wr-way-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-terminal"/></svg>Use it</h3>
+      <p class="wr-way-desc">Connect by hand or through a room, then attach one CRDT document to every open channel. The <a href="https://github.com/kyr0/defuss-webrtc/blob/main/docs/demo/app.js">demo's app.js</a> is the complete room client, with leaving, errors and mesh repair.</p>
+      <figure class="mk-code-block" data-variant="file">
+        <div class="mk-code-block-head">
+          <div class="mk-code-block-tabs" role="radiogroup" aria-label="Example">
+            <label><input type="radio" name="cb-use" value="manual" checked>Manual signaling</label><label><input type="radio" name="cb-use" value="room">Room server</label><label><input type="radio" name="cb-use" value="crdt">CRDT</label>
+          </div>
+          <button class="mk-code-block-copy" type="button" aria-label="Copy code"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg></button>
+        </div>
+        <pre data-tab="manual" data-numbers><code><span><span class="mk-code-block-k">import</span> { ManualPeer, downloadSignalBundle, readSignalFile } <span class="mk-code-block-k">from</span> <span class="mk-code-block-s">'defuss-webrtc/webrtc'</span>;</span><span></span><span><span class="mk-code-block-c">// Peer A: save the offer as a file and send it to B</span></span><span><span class="mk-code-block-k">const</span> peer = <span class="mk-code-block-k">new</span> ManualPeer();</span><span>downloadSignalBundle(<span class="mk-code-block-k">await</span> peer.createOffer());</span><span></span><span><span class="mk-code-block-c">// Peer B: answer the offer file, send the answer file back</span></span><span><span class="mk-code-block-k">const</span> peerB = <span class="mk-code-block-k">new</span> ManualPeer();</span><span>downloadSignalBundle(<span class="mk-code-block-k">await</span> peerB.acceptOffer(<span class="mk-code-block-k">await</span> readSignalFile(offerFile)));</span><span></span><span><span class="mk-code-block-c">// Peer A, with the tab still open: import the answer</span></span><span><span class="mk-code-block-k">await</span> peer.acceptAnswer(<span class="mk-code-block-k">await</span> readSignalFile(answerFile));</span><span><span class="mk-code-block-k">const</span> channel = <span class="mk-code-block-k">await</span> peer.waitForOpen();</span><span>channel.send(<span class="mk-code-block-s">'hello'</span>);</span></code></pre>
+        <pre data-tab="room" data-numbers><code><span><span class="mk-code-block-k">import</span> { ManualPeer } <span class="mk-code-block-k">from</span> <span class="mk-code-block-s">'defuss-webrtc/webrtc'</span>;</span><span></span><span><span class="mk-code-block-k">const</span> base = <span class="mk-code-block-s">'https://defuss-webrtc.vercel.app/v1/rooms/lobby'</span>;</span><span><span class="mk-code-block-k">const</span> me = { peerId: crypto.randomUUID(), nickname: <span class="mk-code-block-s">'Alice'</span> };</span><span><span class="mk-code-block-k">const</span> api = <span class="mk-code-block-k">async</span> (method, path, body) =&gt; {</span><span>  <span class="mk-code-block-k">const</span> res = <span class="mk-code-block-k">await</span> fetch(base + path, { method, headers: { <span class="mk-code-block-s">'Content-Type'</span>: <span class="mk-code-block-s">'application/json'</span> }, body: body &amp;&amp; JSON.stringify(body) });</span><span>  <span class="mk-code-block-k">if</span> (!res.ok) <span class="mk-code-block-k">throw new</span> Error((<span class="mk-code-block-k">await</span> res.json()).message);</span><span>  <span class="mk-code-block-k">return</span> res.json();</span><span>};</span><span></span><span><span class="mk-code-block-c">// Join: one fresh offer per member already in the room</span></span><span><span class="mk-code-block-k">const</span> { members } = <span class="mk-code-block-k">await</span> api(<span class="mk-code-block-s">'GET'</span>, <span class="mk-code-block-s">'/members'</span>);</span><span><span class="mk-code-block-k">const</span> pending = <span class="mk-code-block-k">new</span> Map(); <span class="mk-code-block-c">// sessionId → peer awaiting its answer</span></span><span><span class="mk-code-block-k">const</span> offers = [];</span><span><span class="mk-code-block-k">for</span> (<span class="mk-code-block-k">const</span> member <span class="mk-code-block-k">of</span> members) {</span><span>  <span class="mk-code-block-k">const</span> peer = <span class="mk-code-block-k">new</span> ManualPeer({ peerId: me.peerId });</span><span>  <span class="mk-code-block-k">const</span> bundle = <span class="mk-code-block-k">await</span> peer.createOffer({ metadata: { nickname: me.nickname } });</span><span>  pending.set(bundle.sessionId, peer);</span><span>  offers.push({ to: member.peerId, bundle });</span><span>}</span><span><span class="mk-code-block-k">await</span> api(<span class="mk-code-block-s">'POST'</span>, <span class="mk-code-block-s">'/join'</span>, { ...me, offers });</span><span></span><span><span class="mk-code-block-c">// Every 2 s: heartbeat, then complete the answers addressed to me</span></span><span>setInterval(<span class="mk-code-block-k">async</span> () =&gt; {</span><span>  <span class="mk-code-block-k">const</span> state = <span class="mk-code-block-k">await</span> api(<span class="mk-code-block-s">'GET'</span>, <span class="mk-code-block-s">`/members?peerId=</span>${encodeURIComponent(me.peerId)}<span class="mk-code-block-s">`</span>);</span><span>  <span class="mk-code-block-k">for</span> (<span class="mk-code-block-k">const</span> answer <span class="mk-code-block-k">of</span> state.answers) {</span><span>    <span class="mk-code-block-k">const</span> peer = answer.to === me.peerId &amp;&amp; pending.get(answer.sessionId);</span><span>    <span class="mk-code-block-k">if</span> (!peer) <span class="mk-code-block-k">continue</span>;</span><span>    pending.delete(answer.sessionId);</span><span>    <span class="mk-code-block-k">await</span> peer.acceptAnswer(answer.bundle);</span><span>    peer.waitForOpen().then((channel) =&gt; doc.attach(channel));</span><span>  }</span><span>  <span class="mk-code-block-c">// offers addressed to me: acceptOffer(), then POST /answers (see the README)</span></span><span>}, <span class="wr-json-literal">2000</span>);</span></code></pre>
+        <pre data-tab="crdt" data-numbers><code><span><span class="mk-code-block-k">import</span> { createCrdtDocument, defineSchema, register, counter, orSet, list } <span class="mk-code-block-k">from</span> <span class="mk-code-block-s">'defuss-webrtc/crdt'</span>;</span><span></span><span><span class="mk-code-block-k">const</span> schema = defineSchema({</span><span>  title: register(<span class="mk-code-block-s">'Untitled'</span>), <span class="mk-code-block-c">// last writer wins</span></span><span>  votes: counter(<span class="wr-json-literal">0</span>),           <span class="mk-code-block-c">// increments add up</span></span><span>  tags: orSet([]),             <span class="mk-code-block-c">// add wins over a concurrent delete</span></span><span>  messages: list([]),          <span class="mk-code-block-c">// concurrent inserts all survive</span></span><span>});</span><span><span class="mk-code-block-k">const</span> doc = createCrdtDocument({ id: <span class="mk-code-block-s">'room-42'</span>, actorId: peer.peerId, schema });</span><span>doc.attach(<span class="mk-code-block-k">await</span> peer.waitForOpen()); <span class="mk-code-block-c">// one document, any number of channels</span></span><span></span><span>doc.subscribe(({ origin, state }) =&gt; render(state)); <span class="mk-code-block-c">// 'local' | 'remote' | 'import'</span></span><span>doc.listInsert([<span class="mk-code-block-s">'messages'</span>], doc.state.messages.length, { text: <span class="mk-code-block-s">'hello'</span> });</span><span></span><span><span class="mk-code-block-c">// offline copy: merge it back into any replica later</span></span><span>localStorage.setItem(<span class="mk-code-block-s">'room-42'</span>, JSON.stringify(doc.export()));</span></code></pre>
+        <span class="mk-code-block-status" role="status"></span>
+      </figure>
+    </div>
+
+    <hr class="separator wr-sep-wide">
+    <div class="wr-way wr-way-agent">
+      <h3 class="wr-way-title"><svg class="wr-icon" aria-hidden="true"><use href="#i-bot"/></svg>Vibe coding</h3>
+      <p class="wr-way-desc">Paste this prompt into your coding agent. It links the repository, so the agent works from the current README and protocol.</p>
+      <div class="wr-prompt">
+        <div class="mockup-code" data-chrome="mac" data-title="coding agent · ~/your-app" data-wrap id="agent-prompt">
+          <pre data-prefix=">"><code>Use defuss-webrtc for peer-to-peer state in this app: https://github.com/kyr0/defuss-webrtc</code></pre>
+          <pre data-prefix=""><code>Read its README.md and server/PROTOCOL.md first. Connect peers with ManualPeer bundles (complete SDP, no trickle ICE), through the room server or by hand as JSON files.</code></pre>
+          <pre data-prefix=""><code>Model the shared state with defineSchema(), attach one CRDT document to every open RTCDataChannel, and render from doc.subscribe().</code></pre>
+          <pre data-prefix=""><code>Rooms: the joiner offers to every member; poll GET /members?peerId= every 2 s as the heartbeat. Keep the offering RTCPeerConnection alive until its answer arrives.</code></pre>
+          <pre data-prefix="" data-tone="muted" data-cursor><code>⏎ send</code></pre>
+        </div>
+        <button type="button" class="btn wr-prompt-copy" data-variant="secondary" data-size="sm" id="copy-prompt"><svg class="wr-icon" aria-hidden="true"><use href="#i-copy"/></svg><span>Copy prompt</span></button>
+        <span class="sr-only" role="status" id="copy-prompt-status"></span>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <div class="container wr-section parallax-reveal" data-reveal="zoom">
+    <div class="corner-leaf wr-consult">
+      <section class="mk-cta" data-variant="split" aria-labelledby="vae-title">
+        <div class="mk-cta-inner">
+          <div class="mk-cta-copy">
+            <div class="wr-cta-head">
+              <div class="aura aura-glow aura-gold wr-cta-portrait" style="--shape-round:1.25rem"><img class="shape-squircle" src="assets/aron-homberg.jpg" width="400" height="400" alt="Portrait of Aron Homberg" loading="lazy"></div>
+              <h2 class="mk-cta-title" id="vae-title">Stressed with inconsistent results and tiring reviews?</h2>
+            </div>
+            <p class="mk-cta-desc">Build more consistent agents with <a href="https://github.com/kyr0/defuss-vae" target="_blank" rel="noopener"><strong>defuss-vae</strong><svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>, Aron Homberg’s <a href="https://vae.defuss.org/" target="_blank" rel="noopener"><strong>Verified Agentic Engineering</strong><svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a> method. Aron is a freelance AI researcher, O’Reilly author (2011), conference speaker, and longtime mentor to software engineering teams.</p>
+          </div>
+          <div class="mk-cta-actions wr-consult-actions">
+            <a class="btn" data-size="lg" href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener"><svg class="wr-icon wr-icon-fill" aria-hidden="true"><use href="#i-linkedin"/></svg>Talk to Aron on LinkedIn<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+            <p class="mk-cta-note wr-consult-note">...if you're looking for a remote training or mentoring session for you or your engineering team.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="container wr-section parallax-reveal" data-reveal="zoom">
+    <section class="mk-cta" data-variant="dark" aria-labelledby="cta-title">
+      <div class="mk-cta-inner">
+        <div class="mk-cta-copy">
+          <h2 class="mk-cta-title" id="cta-title">Connect browsers directly, merge state without conflicts</h2>
+          <p class="mk-cta-desc">WebRTC data channels with file or room signaling and a schema-aware CRDT, in one package without dependencies, with a signaling server for Node.js and Vercel.</p>
+        </div>
+        <div class="mk-cta-actions">
+          <a class="btn" data-size="lg" href="https://github.com/kyr0/defuss-webrtc" target="_blank" rel="noopener">View on GitHub<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+          <a class="btn" data-variant="outline" data-size="lg" href="https://www.npmjs.com/package/defuss-webrtc" target="_blank" rel="noopener">npm package<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+        </div>
+        <p class="mk-cta-note">MIT licensed · 0.1.0 · zero runtime dependencies</p>
+      </div>
+    </section>
+  </div>
+
+  </main>
+
+  <footer class="mk-footer" style="width:100%">
+    <div class="mk-footer-inner">
+      <nav class="mk-footer-nav wr-footer-nav" aria-label="Footer">
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Project</h3>
+          <ul class="mk-footer-list">
+            <li><a href="https://github.com/kyr0/defuss-webrtc" target="_blank" rel="noopener">Source code<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-webrtc/blob/main/README.md" target="_blank" rel="noopener">README<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-webrtc/blob/main/ARCH.md" target="_blank" rel="noopener">Architecture<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-webrtc/blob/main/server/PROTOCOL.md" target="_blank" rel="noopener">Signaling protocol<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://github.com/kyr0/defuss-webrtc/blob/main/ROADMAP.md" target="_blank" rel="noopener">Roadmap<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://www.npmjs.com/package/defuss-webrtc" target="_blank" rel="noopener">npm<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+          </ul>
+        </div>
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">This page</h3>
+          <ul class="mk-footer-list">
+            <li><a href="#demo">Live demo</a></li>
+            <li><a href="#how">How it works</a></li>
+            <li><a href="#server">Signaling server</a></li>
+            <li><a href="#model">Room data model</a></li>
+            <li><a href="#explorer">CRDT explorer</a></li>
+            <li><a href="#api">API</a></li>
+          </ul>
+        </div>
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Works with</h3>
+          <ul class="mk-footer-list">
+            <li><a href="https://github.com/kyr0/defuss-shadcn" target="_blank" rel="noopener">defuss-shadcn<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://www.npmjs.com/package/defuss-store" target="_blank" rel="noopener">defuss-store<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+            <li><a href="https://www.npmjs.com/package/defuss-dataview" target="_blank" rel="noopener">defuss-dataview<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a></li>
+          </ul>
+        </div>
+        <div class="mk-footer-col">
+          <h3 class="mk-footer-heading">Professional consulting services</h3>
+          <aside class="corner-leaf wr-ad" aria-label="Consulting by Aron Homberg">
+            <div class="wr-ad-head">
+              <div class="aura aura-glow aura-gold wr-ad-portrait" style="--shape-round:1.5rem"><img class="shape-squircle" src="assets/aron-homberg.jpg" width="400" height="400" alt="Portrait of Aron Homberg" loading="lazy"></div>
+              <div>
+                <p class="wr-ad-name">Aron Homberg</p>
+                <p class="wr-ad-role">Freelance computer science expert · independent AI researcher</p>
+              </div>
+            </div>
+            <a class="btn" data-size="sm" href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener"><svg class="wr-icon wr-icon-fill" aria-hidden="true"><use href="#i-linkedin"/></svg>Connect on LinkedIn<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>
+          </aside>
+        </div>
+      </nav>
+      <hr class="separator mk-footer-rule">
+      <div class="mk-footer-bottom">
+        <a href="#top" class="mk-footer-brand" aria-label="Back to the top"><svg class="wr-icon" aria-hidden="true"><use href="#i-logo"/></svg><span class="mk-footer-brand-name">defuss-webrtc</span></a>
+        <div class="mk-footer-meta">
+          <p class="mk-footer-copy">© 2026 <a href="https://www.linkedin.com/in/aronhomberg/" target="_blank" rel="noopener">Aron Homberg (kyr0)<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a> · MIT. Built with <a href="https://github.com/kyr0/defuss-shadcn" target="_blank" rel="noopener">defuss-shadcn<svg class="wr-icon wr-ext" aria-hidden="true"><use href="#i-external"/></svg><span class="sr-only"> (opens in a new tab)</span></a>.</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+</div>
+<div class="fab" data-scroll-top>
+  <a class="btn fab-trigger" href="#top" aria-label="Back to top"><span class="fab-icon" aria-hidden="true"><svg class="wr-icon"><use href="#i-arrow-up"/></svg></span></a>
+</div>
+
+<script type="module" src="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/all.min.js" integrity="sha384-Lk87A4KViuU62PT7Hy5Qw2DHzw0iEtvi2huW/2h9963U/cZLBARdRf7LZMCsirTa" crossorigin="anonymous"></script>
+<script type="module" src="assets/site.js"></script>
+<script type="module" src="assets/explorer.js"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
     // Every hit snapshots a Map/Set the loop body deletes from (sweeps, teardown); the copy keeps entries that a
     // synchronous close() callback adds mid-loop out of that loop, so it is deliberate, not useless.
     "unicorn/no-useless-spread": "off",
-    // Fires on the generic request helpers (docs/app.js roomApi, e2e call), whose method is a variable and whose body
+    // Fires on the generic request helpers (docs/demo/app.js roomApi, e2e call), whose method is a variable and whose body
     // is undefined for every GET caller; fetch itself throws on a GET body, which the e2e suites would catch.
     "unicorn/no-invalid-fetch-options": "off"
   }
