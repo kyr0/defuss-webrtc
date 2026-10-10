@@ -1,6 +1,7 @@
-// Serves the docs chat app for the browser tests: docs/ at "/", and the freshly
-// built library (./dist) at "/dist/" instead of the vendored docs/dist copy, so
-// the tests always exercise the current source.
+// Serves the docs site for the browser tests: docs/ at "/" (landing page at "/",
+// chat app at "/demo/"), and the freshly built library (./dist) at "/dist/"
+// instead of the vendored docs/dist copy, so the tests always exercise the
+// current source.
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -18,10 +19,14 @@ const TYPES = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
 };
 
 function resolve(pathname) {
-  const [base, rest] = pathname.startsWith("/dist/") ? [dist, pathname.slice(6)] : [docs, pathname.slice(1) || "index.html"];
+  // A directory path serves its index.html, as GitHub Pages does ("/" is the landing page, "/demo/" the chat app).
+  // VERIFIED: without it "/demo/" resolved to the docs/demo directory, which is no file, and answered 404.
+  if (pathname.endsWith("/")) pathname += "index.html";
+  const [base, rest] = pathname.startsWith("/dist/") ? [dist, pathname.slice(6)] : [docs, pathname.slice(1)];
   const file = normalize(join(base, decodeURIComponent(rest)));
   return file === base || file.startsWith(base + sep) ? file : null; // no path traversal
 }

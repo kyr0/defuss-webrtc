@@ -9,3 +9,4 @@ outside it, and recurrence inside one subsystem never widens it.
 Every line carries its BC and stays ≤240 chars. Replace stale lines instead of appending.
 Mechanizable lessons belong in tests or .agents/VERIFY.py.
 Budget 4 KiB (`vae.py doctor --repo .`); entries are injected at session start. -->
+- VERIFIED[docs/ defuss-shadcn@0.9.8] the release ships no Teaser or Play Button (no CSS/JS/files) though the plugin skill documents them BC jsDelivr file listing + all.min.css grep 2026-10-10; docs/index.html uses a card + button instead

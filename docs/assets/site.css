@@ -1,0 +1,218 @@
+/* Page layout and composition, adapted from the defuss-dataview and defuss-store sites. Colours, radii and shadows come
+   from defuss-shadcn tokens; the JSON literal hue and the flythrough's night sky have no token and stay literals here. */
+@layer components {
+  /* the base reset the defuss-shadcn docs site applies, which its Landing Page blocks assume */
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; line-height: 1.6; background: var(--background); color: var(--foreground); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  [hidden] { display: none !important; }
+  /* the header is a direct child of the page, so it stays sticky over every section; the clip keeps absolute
+     descendants (sr-only labels) from scrolling a phone sideways */
+  .wr-page { position: relative; overflow-x: clip; }
+  .wr-main { display: flex; flex-direction: column; gap: clamp(5rem, 11vw, 9rem); padding-block-end: clamp(5rem, 11vw, 9rem); }
+  .wr-section { width: 100%; max-width: 76rem; padding-inline: 1rem; scroll-margin-top: 5rem; }
+  .wr-model { scroll-margin-top: 5rem; }
+  /* section links move focus to the section (tabindex -1) for screen readers; it is not a control, so no ring */
+  .wr-page [tabindex="-1"]:focus, .wr-page[tabindex="-1"]:focus { outline: none; }
+  .wr-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .wr-icon-fill { fill: currentColor; stroke: none; }
+  .wr-brand-icon { color: var(--chart-2); }
+  .wr-ext { width: .75em; height: .75em; margin-inline-start: .15em; vertical-align: -.05em; opacity: .75; }
+  .mk-hero-note a, .mk-footer-copy a, .mk-section-header-desc a, .wr-way-desc a, .wr-api-lead a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+  :where(.wr-main) :not(pre) > code { font-family: var(--font-mono); font-size: .875em; }
+  .mk-hero-desc code { padding: .05em .3em; border-radius: var(--radius-sm); background: color-mix(in oklch, var(--muted) 80%, transparent); }
+
+  /* hero */
+  .wr-flip { margin: 0; font-size: clamp(1.25rem, 4.5vw, 2.5rem); font-weight: 700; letter-spacing: -.03em; line-height: 1.15; }
+  .wr-accent { background: linear-gradient(90deg, var(--chart-2), var(--chart-4)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .wr-intro { display: grid; gap: 2rem 2.25rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+    width: 100%; max-width: 64rem; margin: clamp(5.5rem, 13vw, 10rem) auto 0; padding-inline: 1.25rem; text-align: start; }
+  .wr-intro-item { display: flex; flex-direction: column; gap: .5rem; }
+  .wr-intro-icon { display: grid; place-items: center; width: 4.5rem; height: 4.5rem; border-radius: var(--radius-xl); font-size: 2.25rem;
+    color: var(--foreground); background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
+  .wr-intro h3 { margin: .25rem 0 0; font-size: .9375rem; font-weight: 600; }
+  .wr-intro p { margin: 0; font-size: .8125rem; line-height: 1.6; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-intro strong { color: var(--foreground); font-weight: 600; }
+
+  /* flythrough: the stage is viewport-high (the animation spans exactly the pinned stretch) and only its middle
+     28rem band shows, so its empty top and bottom are pulled into the neighbouring gaps */
+  .wr-flythrough { padding-inline: 1rem; margin-block: calc(-1 * clamp(4rem, 12vh, 9rem)); }
+  .wr-flythrough .parallax-stage { clip-path: inset(max(0px, calc((100dvh - 28rem) / 2)) 0 round var(--radius-xl)); }
+  .wr-fly-word { margin: 0; font-size: clamp(3rem, 10vw, 6rem); font-weight: 800; letter-spacing: -.04em; text-align: center; background: linear-gradient(90deg, #9db2ff, #7cf0ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* the demo window: two peers side by side behind one teaser, stacked on phones */
+  .wr-window {
+    display: flex; flex-direction: column; gap: .75rem; margin-block-start: 2.5rem; padding: clamp(.5rem, 1.5vw, .875rem);
+    background-color: var(--card); border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: var(--shadow-2xl),
+      0 30px 80px -30px color-mix(in oklch, var(--chart-2) 45%, transparent);
+  }
+  .wr-start { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; min-height: clamp(22rem, 50vh, 30rem);
+    padding: 2rem; text-align: center; border-radius: var(--radius-lg); }
+  .wr-start-title { margin: 0; font-size: clamp(1.375rem, 3vw, 1.875rem); font-weight: 700; letter-spacing: -.02em; }
+  .wr-start-text { margin: 0; max-width: 34rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-peers { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+  .wr-frame { height: clamp(36rem, 82vh, 50rem); border-radius: var(--radius-lg); overflow: hidden; border: 1px solid var(--border); }
+  .wr-frame .iframe { height: 100%; margin: 0; }
+  @media (max-width: 48rem) { .wr-peers { grid-template-columns: minmax(0, 1fr); } }
+  .wr-window-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding-inline: .25rem; }
+  .wr-window-note { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: .8125rem; color: var(--muted-foreground); }
+  .wr-window-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+  /* how it works: three explained sequence diagrams, then outcomes and steps */
+  .wr-diagram-block { display: flex; flex-direction: column; gap: 1.25rem; margin-block-start: clamp(3rem, 6vw, 4.5rem); }
+  .wr-diagram-copy { display: flex; gap: 1rem; align-items: flex-start; max-width: 56rem; }
+  .wr-diagram-number { display: grid; place-items: center; flex: none; width: 2.25rem; height: 2.25rem; border-radius: 999px; font-weight: 700;
+    background: color-mix(in oklch, var(--chart-2) 22%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chart-2) 35%, transparent); }
+  .wr-subtitle { margin: 0 0 .5rem; font-size: 1.25rem; font-weight: 600; }
+  /* wider boxes and gaps than the defaults: the message labels carry endpoints and calls */
+  .wr-seq { --diagram-node-w: 11rem; --diagram-gap-x: 9rem; margin: 0; }
+  .wr-flow-detail { display: block; min-height: 3rem; font-size: .875rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-how-grid { display: grid; gap: 2.5rem 3rem; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; margin-block-start: clamp(3rem, 6vw, 4.5rem); }
+  .wr-how-grid .mk-process-step-title { font-size: 1rem; }
+  @media (max-width: 60rem) { .wr-how-grid { grid-template-columns: minmax(0, 1fr); } }
+  .wr-outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .875rem; }
+  .wr-outcome { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .75rem; align-items: baseline; }
+  .wr-outcome .badge { justify-self: start; }
+  .wr-outcome p { margin: 0; font-size: .875rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-note { margin: 1rem 0 0; font-size: .75rem; color: var(--muted-foreground); }
+
+  /* signaling server: one tab per implementation, facts beside a picture and the commands */
+  .wr-tabs { margin-block-start: 2.5rem; }
+  .wr-tabs .tab-list, .wr-api .tab-list { max-width: 100%; overflow-x: auto; margin-block-end: 1.5rem; }
+  .wr-tabs .tab-trigger { gap: .5rem; }
+  .wr-host-grid { display: grid; gap: 2rem 3rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 60rem) { .wr-host-grid { grid-template-columns: minmax(0, 1fr); } }
+  .wr-host-side { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+  .wr-host-side .mk-code-block { margin: 0; }
+  .wr-arch { --diagram-node-w: 11rem; --diagram-gap-x: 3rem; margin: 0; }
+  .wr-dl { display: grid; gap: .5rem; margin: 0; }
+  .wr-dl > div { display: grid; grid-template-columns: minmax(7.5rem, 30%) minmax(0, 1fr); gap: .75rem; align-items: baseline; padding-block: .5rem; border-block-end: 1px dashed var(--border); }
+  .wr-dl > div:last-child { border-block-end: 0; }
+  .wr-dl dt { font-size: .8125rem; font-weight: 600; color: var(--muted-foreground); }
+  .wr-dl dd { margin: 0; font-size: .875rem; overflow-wrap: anywhere; text-wrap: pretty; }
+
+  /* the room data model */
+  .wr-model { display: flex; flex-direction: column; gap: 1.5rem; margin-block-start: clamp(3.5rem, 7vw, 5rem); }
+  .wr-lead { margin: 0; max-width: 56rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-er { --diagram-node-w: 12rem; margin: 0; }
+  .wr-lifetime { max-width: 64rem; }
+  .wr-rules { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+  .wr-rule .card-title { display: flex; align-items: center; gap: .5rem; }
+  .wr-rule .card-description { text-wrap: pretty; }
+
+  /* CRDT explorer: three stacked steps in one card, so the editors and the result get the full width */
+  .wr-explorer { display: flex; flex-direction: column; margin-block-start: 2.5rem; padding: 0; gap: 0; overflow: hidden;
+    box-shadow: var(--shadow-xl), 0 30px 80px -40px color-mix(in oklch, var(--chart-2) 45%, transparent); }
+  .wr-step { display: flex; flex-direction: column; gap: .875rem; min-width: 0; padding: clamp(1rem, 2.5vw, 1.75rem); }
+  .wr-step + .wr-step { border-block-start: 1px solid var(--border); }
+  .wr-step-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; }
+  .wr-step-title { display: flex; align-items: center; gap: .625rem; margin: 0; font-size: 1.125rem; font-weight: 600; }
+  .wr-step-number { display: grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: 999px; font-size: .8125rem;
+    background: var(--primary); color: var(--primary-foreground); }
+  .wr-step-hint { margin: 0; font-size: .8125rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-preset-note { min-height: 1.3em; color: var(--foreground); }
+  .wr-examples { display: flex; flex-wrap: wrap; gap: .375rem; }
+  .wr-editors { display: grid; gap: 1rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 56rem) { .wr-editors { grid-template-columns: minmax(0, 1fr); } }
+  .wr-editors .mk-code-block { margin: 0; min-width: 0; }
+  .wr-schema pre { margin: 0; }
+  /* the editors: a transparent textarea over the Code Example block's lines, both on the block's metrics */
+  .wr-editor-body { position: relative; height: 14rem; }
+  .wr-editor .wr-editor-view, .wr-editor-input { position: absolute; inset: 0; margin: 0; }
+  .wr-editor .wr-editor-view { overflow: hidden; pointer-events: none; }
+  .wr-editor-input { width: 100%; height: 100%; padding: 1rem; border: 0; outline: none; resize: none; overflow: auto; white-space: pre; tab-size: 2;
+    background: transparent; color: transparent; caret-color: oklch(0.92 0 0); font-family: var(--font-mono); font-size: .8125rem; line-height: 1.7; }
+  .wr-editor-input::selection { background: oklch(0.6 0.12 250 / .45); color: transparent; }
+  .wr-editor:has(.wr-editor-input:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
+  .wr-json-literal { color: oklch(0.82 0.12 70); }
+  .wr-apply { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+  .wr-stale { color: var(--foreground); font-weight: 500; }
+  .wr-step .alert { margin: 0; }
+  .wr-result-tabs .tab-list { max-width: 100%; overflow-x: auto; margin-block-end: .75rem; }
+  .wr-result { margin: 0; }
+  .wr-result pre { max-height: 24rem; overflow: auto; margin: 0; }
+
+  /* API */
+  .wr-api { margin-block-start: 2.5rem; }
+  .wr-api .tab-content { display: flex; flex-direction: column; gap: 1.5rem; }
+  .wr-api .tab-content[hidden] { display: none !important; }
+  .wr-api-lead { margin: 0; max-width: 52rem; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-table .table-cell:first-child code { white-space: nowrap; }
+  .wr-table .table-cell { vertical-align: top; }
+
+  /* install: one leaf-cornered panel on a faint dot pattern */
+  .wr-use {
+    --shape-round: 3rem; --shape-ink: color-mix(in oklch, var(--foreground) 9%, transparent); --shape-pattern: 18px;
+    display: flex; flex-direction: column; gap: 2rem; padding: clamp(1.5rem, 4vw, 3rem); border: 1px solid var(--border);
+    background-color: color-mix(in oklch, var(--card) 75%, transparent);
+    box-shadow: var(--shadow-xl), 0 30px 80px -40px color-mix(in oklch, var(--chart-2) 45%, transparent);
+  }
+  .wr-ways { display: flex; gap: 2.5rem; }
+  .wr-way { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1.25rem; }
+  .wr-way-title { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: 1.25rem; font-weight: 600; }
+  .wr-way-desc { margin: 0; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-use .mk-code-block { margin: 0; }
+  /* the block's CSS-only tabs know npm / pnpm / bun; these are this page's own tab values */
+  .mk-code-block:has(input[value="manual"]:checked) [data-tab="manual"], .mk-code-block:has(input[value="room"]:checked) [data-tab="room"],
+  .mk-code-block:has(input[value="crdt"]:checked) [data-tab="crdt"] { display: block; }
+  /* half-width columns: wrap instead of cutting, with continuation lines hanging past the number column */
+  .wr-use .mk-code-block code > span { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .wr-use .mk-code-block pre[data-numbers] code > span { padding-inline-start: 3rem; text-indent: -3rem; }
+  .wr-usage { display: flex; flex-direction: column; gap: 1.25rem; }
+  .wr-sep-horizontal { display: none; }
+  .wr-sep-wide { width: 100%; margin: 0; }
+  @media (max-width: 56rem) {
+    .wr-ways { flex-direction: column; }
+    .wr-sep-vertical { display: none; }
+    .wr-sep-horizontal { display: block; width: 100%; margin: 0; }
+  }
+  .wr-prompt { position: relative; }
+  .wr-prompt .mockup-code { margin: 0; }
+  .wr-prompt-copy { position: absolute; inset-block-start: .3rem; inset-inline-end: .5rem; }
+
+  /* defuss-vae CTA: a leaf-cornered card; portrait + question, then the pitch, then the action with its note */
+  .wr-consult { --shape-round: 3rem; overflow: hidden; border: 1px solid var(--border); background-color: var(--card);
+    box-shadow: var(--shadow-xl), 0 30px 80px -40px color-mix(in oklch, var(--chart-2) 45%, transparent); }
+  .wr-consult .mk-cta, .wr-consult .mk-cta[data-variant] { background: transparent; }
+  .wr-consult .mk-cta[data-variant] .mk-cta-inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; align-items: center; gap: 1.25rem 2rem; text-align: start;
+    padding: clamp(1.5rem, 3vw, 2.25rem) clamp(1.5rem, 3vw, 2.5rem); background: transparent; border-radius: 0; }
+  .wr-consult .mk-cta[data-variant] .mk-cta-copy { display: contents; }
+  .wr-consult .wr-cta-head { grid-column: 1; display: flex; align-items: center; gap: 1.25rem; }
+  .wr-consult .mk-cta[data-variant] .mk-cta-title { margin: 0; font-size: clamp(1.25rem, 2.2vw, 1.625rem); }
+  .wr-consult .mk-cta[data-variant] .mk-cta-desc { grid-column: 2; margin: 0; font-size: .9375rem; }
+  .wr-consult .mk-cta-desc a { color: var(--foreground); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+  .wr-consult .mk-cta[data-variant] .mk-cta-actions { grid-column: 3; justify-content: flex-end; }
+  .wr-consult .wr-consult-actions { flex-direction: column; align-items: flex-end; gap: .625rem; }
+  .wr-consult .wr-consult-note { max-width: 17rem; margin: 0; font-size: .8125rem; line-height: 1.45; text-align: end; color: var(--muted-foreground); text-wrap: pretty; }
+  .wr-cta-portrait { width: 4rem; flex: none; }
+  .wr-cta-portrait img { display: block; width: 100%; height: auto; }
+  @media (max-width: 56rem) {
+    .wr-consult .mk-cta[data-variant] .mk-cta-inner { grid-template-columns: minmax(0, 1fr); }
+    .wr-consult .wr-cta-head, .wr-consult .mk-cta[data-variant] .mk-cta-desc, .wr-consult .mk-cta[data-variant] .mk-cta-actions { grid-column: auto; justify-content: flex-start; }
+    .wr-consult .wr-consult-actions { align-items: flex-start; }
+    .wr-consult .wr-consult-note { text-align: start; }
+  }
+
+  /* footer ad: a leaf-cornered panel with a squircle portrait in a gold halo */
+  .wr-ad {
+    --shape-round: 2rem; display: flex; flex-direction: column; gap: .875rem; padding: 1.25rem;
+    border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+    background: linear-gradient(135deg, color-mix(in oklch, var(--chart-2) 16%, var(--card)), var(--card) 65%);
+  }
+  .wr-ad-head { display: flex; align-items: center; gap: .875rem; }
+  .wr-ad-portrait { width: 5.5rem; flex: none; }
+  .wr-ad-portrait img { display: block; width: 100%; height: auto; }
+  .wr-ad-name { margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--foreground); }
+  .wr-ad-role { margin: 0; font-size: .8125rem; line-height: 1.5; color: var(--muted-foreground); }
+  .wr-ad .btn { align-self: flex-start; }
+  @media (min-width: 64rem) { .wr-footer-nav.mk-footer-nav { grid-template-columns: 1fr 1fr 1fr 1.8fr; } }
+
+  @media (prefers-contrast: more) {
+    .wr-intro p, .wr-way-desc, .wr-api-lead, .wr-step-hint, .wr-lead, .wr-outcome p, .wr-flow-detail { color: var(--foreground); }
+  }
+  @media (forced-colors: active) {
+    .wr-accent, .wr-fly-word { color: CanvasText; background: none; }
+    .wr-editor-input { color: CanvasText; }
+    .wr-editor .wr-editor-view { visibility: hidden; }
+    .wr-json-literal { color: CanvasText; }
+  }
+}

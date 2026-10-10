@@ -66,10 +66,33 @@ Writes are flat since the state cache and the listener-less notify fast path
   the same connection, with a browser test, as proof that non-chat data syncs
   without library changes.
 
+## Media: video, audio and screen sharing
+
+Today a `ManualPeer` negotiates one data channel and no media tracks. Planned:
+
+- **Audio and video calls.** Camera and microphone tracks (`getUserMedia`)
+  on the same `RTCPeerConnection` as the data channel, so a room gets calls
+  next to its CRDT state without a second signaling round per pair.
+- **Screen sharing.** A display track (`getDisplayMedia`) that a peer can add
+  or replace while connected, plus its audio where the browser offers it.
+- **Renegotiation.** Adding or removing a track after the channel is open
+  needs a new offer and answer. The bundles are complete (no trickle ICE) and
+  the room server stores one offer per pair and session, so the cheapest path
+  is to renegotiate over the open data channel itself (the "perfect
+  negotiation" pattern) instead of going back through the server or a file.
+- **Mesh limits.** In a full mesh every peer sends each track to every other
+  peer, so upload bandwidth grows with the room size. Measure where a room of
+  video peers stops working, and document a selective forwarding unit (SFU) as
+  the path beyond it. TURN matters more for media than for data.
+- **API and demo.** `ManualPeer` options and methods for tracks, a call view
+  in the demo (camera, microphone, screen share, mute), and browser tests on
+  Chromium's fake media devices (`--use-fake-device-for-media-stream`,
+  `--use-fake-ui-for-media-stream`), so CI needs no camera.
+
 ## Library
 
 - **Room client.** Server-based signaling is only implemented in the example
-  app (`docs/app.js`); the README shows a fetch sketch. Extract a
+  app (`docs/demo/app.js`); the README shows a fetch sketch. Extract a
   `joinRoom()` client (offers/answers, polling, heartbeat, mesh repair, the
   reconnection logic, passwords) into the package.
 - **Docs:** bring `ARCH.md` and `SKILL.md` up to date: server-based
@@ -91,7 +114,7 @@ Writes are flat since the state cache and the listener-less notify fast path
 - **Configurable TTLs** (member 90 s, signal 120 s) via env, so the expiry
   paths can be e2e-tested quickly (today only unit-tested).
 
-## Chat app (docs/)
+## Chat app (docs/demo/)
 
 - **Visible "server unreachable" state.** Signaling failures are only logged
   once; there is no UI state beyond the online/offline badge.
@@ -102,6 +125,12 @@ Writes are flat since the state cache and the listener-less notify fast path
   decide whether that is the desired behavior.
 - **TURN configuration** in the UI (only a STUN field today; no credentials
   are bundled).
+
+## Website (docs/)
+
+- **Teaser.** The two-peer demo starts from a card with a button because the
+  defuss-shadcn 0.9.8 release ships no Teaser component, although its skill
+  documents one. Switch to it once a release includes it.
 
 ## Testing and CI
 

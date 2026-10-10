@@ -1,8 +1,8 @@
 // Multi-peer browser tests for the docs chat app: every peer is its own browser
 // context (isolated sessionStorage = its own identity), driving the real UI of
-// docs/index.html against a signaling server, then chatting over WebRTC.
+// docs/demo/index.html against a signaling server, then chatting over WebRTC.
 import { expect, test } from "@playwright/test";
-import { DEFAULT_SIGNAL_URL, DOCS_URL, REMOTE, SERVER_PASSWORD, SIGNAL_URL } from "./env.mjs";
+import { DEFAULT_SIGNAL_URL, DEMO_URL, REMOTE, SERVER_PASSWORD, SIGNAL_URL } from "./env.mjs";
 
 // What the intercepted default server answers — slowly, so it arrives after the
 // target server's list. It must never be rendered (room-list race regression).
@@ -74,7 +74,7 @@ class Peer {
     const peer = new Peer(await context.newPage(), context, nickname);
     peer.defaultServerDone = defaultServerDone;
     peer.serverPassword = serverPassword;
-    await peer.page.goto(DOCS_URL);
+    await peer.page.goto(DEMO_URL);
     await peer.configure();
     return peer;
   }
@@ -86,16 +86,30 @@ class Peer {
     await this.configure();
   }
 
+  /** Walks the connect wizard with a room server: mode, server, this peer; it ends on the room step. */
   async configure() {
     const { page, nickname, serverPassword } = this;
+    await page.click("#wizard-next"); // 1 mode: the room server is preselected
     await page.fill("#server-url", SIGNAL_URL);
     await page.locator("#server-url").dispatchEvent("change");
     await page.fill("#server-password", serverPassword);
     await page.locator("#server-password").dispatchEvent("change");
+    await page.click("#wizard-next"); // 2 signal server
     await page.fill("#stun-servers", ""); // host candidates only: all peers share this machine
     await page.fill("#nickname", nickname);
     await page.click("#set-nickname");
     await expect(page.locator("#log")).toContainText(`Nickname set to "${nickname}"`);
+    await page.click("#wizard-next"); // 3 this peer
+    await expect(page.locator("#room-name")).toBeVisible();
+  }
+
+  /** From the room step back to the mode step, then the manual path to its file exchange. */
+  async chooseManual() {
+    while (await this.page.locator("#wizard-back").isVisible()) await this.page.click("#wizard-back");
+    await this.page.check("#mode-manual");
+    await this.page.click("#wizard-next"); // 1 mode
+    await this.page.click("#wizard-next"); // 2 this peer (configured above)
+    await expect(this.page.locator("#create-offer")).toBeVisible();
   }
 
   async peerId() {
@@ -154,17 +168,17 @@ class Peer {
   }
 
   messages() {
-    return this.page.locator("#messages .message .text").allTextContents();
+    return this.page.locator("#messages .message .bubble-content").allTextContents();
   }
 
   async expectMessages(texts) {
-    await expect(this.page.locator("#messages .message .text")).toHaveText(texts);
+    await expect(this.page.locator("#messages .message .bubble-content")).toHaveText(texts);
   }
 
   async close() {
     if (await this.page.locator("#leave-room").isEnabled().catch(() => false)) {
       await this.page.click("#leave-room");
-      await expect(this.page.locator("#log")).toContainText("Left room");
+      await expect(this.page.locator("#log")).toContainText(/Left (room|the manual chat)/);
     }
     await this.context.close();
   }
@@ -225,8 +239,8 @@ test("three peers form a full mesh and every message reaches everyone @remote", 
   expect([...transcript].sort()).toEqual(["hi from Alice", "hi from Bob", "hi from Carol"]);
 
   // Own messages are marked, and nicknames propagate through the CRDT.
-  await expect(alice.page.locator("#messages .message.own .text")).toHaveText(["hi from Alice"]);
-  await expect(alice.page.locator("#messages .message", { hasText: "hi from Carol" }).locator(".meta")).toContainText("Carol");
+  await expect(alice.page.locator("#messages .message[data-align=end] .bubble-content")).toHaveText(["hi from Alice"]);
+  await expect(alice.page.locator("#messages .message", { hasText: "hi from Carol" }).locator(".message-name")).toContainText("Carol");
   await expect(alice.page.locator("#members")).toContainText("Bob");
   await expect(alice.page.locator("#members")).toContainText("Carol");
   await expect(alice.page.locator("#room-status")).toHaveText(`In room "${room}" — Alice (you) ★, Bob, Carol`);
@@ -351,7 +365,7 @@ test("a dropped connection heals and diverged chat state converges", async ({ br
   // Both keep writing while apart: the states diverge.
   await alice.send("Alice while apart");
   await bob.send("Bob while apart");
-  await expect(bob.page.locator("#messages .message .text")).toHaveText(["while connected", "Bob while apart"]);
+  await expect(bob.page.locator("#messages .message .bubble-content")).toHaveText(["while connected", "Bob while apart"]);
   await alice.page.waitForTimeout(3000);
   expect(await alice.messages()).toEqual(["while connected", "Alice while apart"]);
 
@@ -486,4 +500,39 @@ test("the room list shows only the configured server and pauses inside a room", 
   await expect(bob.page.locator("#rooms")).toHaveText(/Paused while you are in a room/);
   await bob.page.click("#leave-room");
   await expect(bob.page.locator("#rooms")).toContainText(room);
+});
+
+// ---------------------------------------------------------------------------
+// Manual signaling: no server at all
+// ---------------------------------------------------------------------------
+
+test("two peers connect by swapping PEER.json files, then chat without a server", async ({ browser }) => {
+  const [alice, bob] = [await open(browser, "Alice"), await open(browser, "Bob")];
+  await alice.chooseManual();
+  await bob.chooseManual();
+
+  const offerDownload = alice.page.waitForEvent("download");
+  await alice.page.click("#create-offer");
+  const offer = await (await offerDownload).path();
+  const answerDownload = bob.page.waitForEvent("download");
+  await bob.page.setInputFiles("#signal-file", offer);
+  const answer = await (await answerDownload).path();
+  await alice.page.setInputFiles("#signal-file", answer);
+
+  // Once the data channel opens, both leave the wizard for the chat, which syncs without any room.
+  for (const peer of [alice, bob]) {
+    await expect(peer.page.locator("#room-view")).toBeVisible({ timeout: 30_000 });
+    await expect(peer.page.locator("#connect")).toBeHidden();
+    await expect(peer.page.locator("#room-status")).toHaveText("Manual connection, no server");
+    await expect(peer.page.locator("#link-status")).toHaveText("1 peer connected");
+  }
+  await alice.send("hello over files");
+  await bob.expectMessages(["hello over files"]);
+  await bob.send("hi back");
+  await alice.expectMessages(["hello over files", "hi back"]);
+
+  // Disconnecting returns to the wizard's file step.
+  await alice.page.click("#leave-room");
+  await expect(alice.page.locator("#log")).toContainText("Left the manual chat");
+  await expect(alice.page.locator("#create-offer")).toBeVisible();
 });

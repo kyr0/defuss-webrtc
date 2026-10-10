@@ -2,3 +2,5 @@
 # The Makefile verbs were verified on this version (coverage relies on `node --test --test-isolation=none`).
 [tools]
 node = "24.14.0"
+# `bun run dev` serves docs/ through `bunx serve`; nothing else in this repo runs on bun.
+bun = "1.4.2"

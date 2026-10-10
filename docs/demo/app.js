@@ -1,6 +1,8 @@
-// The library is vendored into ./dist/ so this folder works as a self-contained
-// site root (e.g. GitHub Pages). A dynamic import lets us show a visible error
-// instead of failing silently when the files are missing or misplaced.
+// The library is vendored into ../dist/ so docs/ works as a self-contained site
+// root (GitHub Pages). A dynamic import lets us show a visible error instead of
+// failing silently when the files are missing or misplaced.
+import { jsonLines } from "../assets/json.js";
+
 let ManualPeer;
 let downloadSignalBundle;
 let readSignalFile;
@@ -41,9 +43,9 @@ try {
     map,
     object,
     register,
-  } = await import("./dist/index.js"));
+  } = await import("../dist/index.js"));
 } catch (error) {
-  fatal(`Could not load the defuss-webrtc library from ./dist/index.js — ${error.message}. Run "npm run build" and copy dist/ next to this page.`);
+  fatal(`Could not load the defuss-webrtc library from ../dist/index.js — ${error.message}. Run "make site" to copy a fresh build into docs/dist.`);
   throw error;
 }
 
@@ -57,7 +59,19 @@ function uuid() {
 }
 
 const STATE_PROTOCOL = "defuss-chat/state/1";
-const IDENTITY_KEY = "defuss-chat-example/identity";
+
+// ?peer=a names this page's peer slot. The landing page frames two peers in one
+// tab, and sessionStorage belongs to the tab (HTML spec: one storage area per
+// top-level browsing context and origin; VERIFIED in Chromium: frame A lists
+// frame B's key), so each slot keeps its identity under its own key. ?room=
+// only pre-fills the room name both frames share.
+// Query parameters keep both frames on the page's origin, so they load the
+// vendored library and read the saved theme; two tabs would not sit side by side.
+// VERIFIED: e2e/browser/site.spec.mjs sees two distinct peer ids in one tab.
+const params = new URLSearchParams(location.search);
+const peerSlot = /^[a-z0-9-]{1,16}$/i.test(params.get("peer") ?? "") ? params.get("peer") : "";
+const presetRoom = /^[a-zA-Z0-9_-]{1,64}$/.test(params.get("room") ?? "") ? params.get("room") : "";
+const IDENTITY_KEY = `defuss-chat-example/identity${peerSlot ? `:${peerSlot}` : ""}`;
 
 // ---------------------------------------------------------------------------
 // CRDT chat schema: every message carries text, nickname and date/time.
@@ -82,6 +96,11 @@ const roomPasswordInput = $("room-password");
 const createRoomButton = $("create-room");
 const joinRoomButton = $("join-room");
 const leaveRoomButton = $("leave-room");
+const connectView = $("connect");
+const roomView = $("room-view");
+const linkStatus = $("link-status");
+const wizardBack = $("wizard-back");
+const wizardNext = $("wizard-next");
 const roomStatus = $("room-status");
 const roomsList = $("rooms");
 const connectionsList = $("connections");
@@ -92,6 +111,9 @@ const messagesEl = $("messages");
 const chatForm = $("chat-form");
 const messageInput = $("message-input");
 const sendButton = chatForm.querySelector("button[type=submit]");
+const chatSession = $("chat");
+const crdtStateEl = $("crdt-state");
+const crdtSummary = $("crdt-summary");
 const saveStateButton = $("save-state");
 const stateFileInput = $("state-file");
 const logEl = $("log");
@@ -124,7 +146,7 @@ function loadIdentity() {
   }
   const fresh = {
     peerId: uuid(),
-    nickname: `anon-${Math.random().toString(36).slice(2, 6)}`,
+    nickname: peerSlot ? `Peer ${peerSlot.toUpperCase()}` : `anon-${Math.random().toString(36).slice(2, 6)}`,
   };
   sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(fresh));
   return fresh;
@@ -132,6 +154,11 @@ function loadIdentity() {
 
 let identity = loadIdentity();
 nicknameInput.value = identity.nickname;
+if (presetRoom) roomNameInput.value = presetRoom;
+if (peerSlot) {
+  $("peer-label").textContent = `Peer ${peerSlot.toUpperCase()}`;
+  $("peer-label").hidden = false;
+}
 
 // CRDT actor ("writer") id = peer id + a per-page-load suffix. A reloaded page
 // starts a fresh document whose op sequence restarts at 1; with the bare peer id
@@ -147,13 +174,17 @@ const actorId = () => `${identity.peerId}#${pageLoadId}`;
 // Documents are cached per room name, so leaving and rejoining keeps history.
 // ---------------------------------------------------------------------------
 const docsByRoom = new Map(); // room name -> CrdtDocument
-let roomDoc = null; // the active room's document (null when not in a room)
+let roomDoc = null; // the active chat document: a server room's, or MANUAL_DOC_ID's (null before connecting)
+// Peers connected by PEER.json files have no room to name their document, so they all use this id: the CRDT
+// hello rejects channels whose docId differs, so both sides must agree on it.
+const MANUAL_DOC_ID = "manual";
 
 function createDoc(actorId, docId) {
   const doc = createCrdtDocument({ id: docId, actorId, schema: chatSchema });
   doc.subscribe(() => {
     renderMessages();
     renderMembers();
+    renderInspector();
   });
   doc.onError((error) => log(`CRDT error ${error.code}: ${error.message}`));
   return doc;
@@ -343,6 +374,12 @@ async function connectPeer(peer, sessionId, remotePeerId, remoteNickname, origin
   }
 
   const conn = { peer, channel, remotePeerId, remoteNickname, origin, detach: null, superseded: false };
+  if (origin === "manual" && !roomDoc) {
+    // The first file-signaled channel: the manual chat starts, and the UI switches from the wizard to it.
+    roomDoc = getDoc(MANUAL_DOC_ID);
+    announceNickname();
+    updateRoomUI();
+  }
   if (roomDoc) conn.detach = roomDoc.attach(channel);
   connections.set(sessionId, conn);
 
@@ -371,8 +408,8 @@ async function connectPeer(peer, sessionId, remotePeerId, remoteNickname, origin
       }, DISCONNECT_GRACE_MS);
     } else if (state === "connected") clearTimeout(graceTimer);
   });
-  log(`Connected to ${label} — ${conn.detach ? "chat state is syncing." : "join a room to start syncing chat."}`);
-  renderConnections();
+  log(`Connected to ${label} — chat state is syncing.`);
+  renderAll();
 }
 
 // ---------------------------------------------------------------------------
@@ -732,21 +769,44 @@ async function onLeaveRoom({ silent = false } = {}) {
   log(`Left room "${name}". Chat history is kept locally.`);
 }
 
+/** Closes the file-signaled connections and returns to the wizard; the manual chat's history stays cached. */
+function onLeaveManual() {
+  if (!roomDoc) return;
+  for (const [sessionId, conn] of [...connections]) {
+    if (conn.origin !== "manual") continue;
+    conn.superseded = true; // a deliberate close, not a lost link
+    conn.detach?.();
+    connections.delete(sessionId);
+    conn.peer.close();
+  }
+  roomDoc = null;
+  updateRoomUI();
+  renderAll();
+  log("Left the manual chat. Its history is kept locally.");
+}
+
 function updateRoomUI() {
   const inRoom = room !== null;
+  const inChat = roomDoc !== null;
   serverUrlInput.disabled = inRoom;
   serverPasswordInput.disabled = inRoom;
   roomNameInput.disabled = inRoom;
   roomPasswordInput.disabled = inRoom;
   createRoomButton.disabled = inRoom;
   joinRoomButton.disabled = inRoom;
-  leaveRoomButton.disabled = !inRoom;
-  messageInput.disabled = !inRoom;
-  messageInput.placeholder = !inRoom
+  leaveRoomButton.disabled = !inChat;
+  leaveRoomButton.textContent = inRoom || !inChat ? "Leave room" : "Disconnect";
+  messageInput.disabled = !inChat;
+  messageInput.placeholder = !inChat
     ? "Join a room to chat…"
     : navigator.onLine ? "Type a message…" : "Offline — messages sync when you reconnect";
-  sendButton.disabled = !inRoom;
-  saveStateButton.disabled = !inRoom;
+  sendButton.disabled = !inChat;
+  saveStateButton.disabled = !inChat;
+  // The wizard until this peer has a chat document, then the chat; the first tab is named after what it shows.
+  connectView.hidden = inChat;
+  roomView.hidden = !inChat;
+  $("tab-main-label").textContent = inChat ? "Chat" : "Connect";
+  if (inChat && !inRoom) roomStatus.textContent = "Manual connection, no server";
 }
 
 function renderNetStatus() {
@@ -842,6 +902,12 @@ chatForm.addEventListener("submit", (event) => {
   });
   messageInput.value = "";
 });
+// The composer is a textarea: Enter sends, Shift+Enter breaks the line.
+messageInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  chatForm.requestSubmit();
+});
 
 // ---------------------------------------------------------------------------
 // Save / restore state (impersonation)
@@ -860,7 +926,7 @@ function downloadJson(value, filename) {
 }
 
 function onSaveState() {
-  if (!room || !roomDoc) {
+  if (!roomDoc) {
     log("Join a room before saving state.");
     return;
   }
@@ -869,10 +935,10 @@ function onSaveState() {
     savedAt: new Date().toISOString(),
     peerId: identity.peerId,
     nickname: identity.nickname,
-    room: room.name,
+    room: roomDoc.id,
     snapshot: roomDoc.export(),
-  }, `defuss-chat-state-${room.name}-${short(identity.peerId)}.json`);
-  log(`State of room "${room.name}" downloaded. Anyone restoring it continues as you, with your full chat history.`);
+  }, `defuss-chat-state-${roomDoc.id}-${short(identity.peerId)}.json`);
+  log(`State of room "${roomDoc.id}" downloaded. Anyone restoring it continues as you, with your full chat history.`);
 }
 
 async function onRestoreState(file) {
@@ -891,13 +957,14 @@ async function onRestoreState(file) {
     nicknameInput.value = identity.nickname;
 
     // Re-create the room's document under the impersonated actor id and import
-    // the exact op-set of the saved peer. If we're in that room right now,
-    // re-attach all live channels to the new doc.
+    // the exact op-set of the saved peer. If that document is the active chat
+    // right now, re-attach all live channels to the new doc.
+    const active = roomDoc?.id === docId;
     const next = createDoc(actorId(), docId);
     const imported = next.merge(data.snapshot);
     docsByRoom.get(docId)?.close();
     docsByRoom.set(docId, next);
-    if (room && room.name === docId) {
+    if (active) {
       roomDoc = next;
       for (const conn of connections.values()) conn.detach = next.attach(conn.channel);
       announceNickname();
@@ -935,6 +1002,9 @@ function renderConnections() {
   if (!pendingOffer && !outgoing.size && !connections.size) {
     connectionsList.append(emptyItem("No connections yet."));
   }
+  const open = [...connections.values()].filter((conn) => conn.channel.readyState === "open").length;
+  linkStatus.textContent = open ? `${open} peer${open === 1 ? "" : "s"} connected` : "waiting for a peer";
+  linkStatus.dataset.variant = open ? "default" : "outline";
 }
 
 function renderMembers() {
@@ -949,13 +1019,76 @@ function renderMembers() {
   membersEl.textContent = names.length ? `Known peers: ${names.join(", ")}` : "No peers known yet.";
 }
 
+/** A quiet line inside the transcript (a Marker), not a message. */
+function markerItem(text) {
+  const item = document.createElement("div");
+  item.className = "session-item";
+  const marker = document.createElement("div");
+  marker.className = "marker";
+  marker.dataset.variant = "separator";
+  const content = document.createElement("span");
+  content.className = "marker-content";
+  content.textContent = text;
+  marker.append(content);
+  item.append(marker);
+  return item;
+}
+
+/** One chat message as a Session row: avatar, name + time, the bubble. Own messages sit at the end. */
+function messageItem(message) {
+  const own = message.from === identity.peerId;
+  const item = document.createElement("div");
+  item.className = "session-item";
+  const row = document.createElement("div");
+  row.className = "message";
+  if (own) row.dataset.align = "end";
+
+  const avatar = document.createElement("div");
+  avatar.className = "message-avatar";
+  const badge = document.createElement("span");
+  badge.className = "avatar";
+  badge.dataset.size = "sm";
+  const initials = document.createElement("span");
+  initials.className = "avatar-fallback";
+  initials.textContent = String(message.nickname ?? "?").slice(0, 2).toUpperCase();
+  badge.append(initials);
+  avatar.append(badge);
+
+  const content = document.createElement("div");
+  content.className = "message-content";
+  const header = document.createElement("div");
+  header.className = "message-header";
+  const name = document.createElement("span");
+  name.className = "message-name";
+  name.textContent = message.nickname;
+  const time = document.createElement("time");
+  time.className = "message-time";
+  const at = new Date(message.at);
+  if (Number.isNaN(at.getTime())) {
+    time.textContent = String(message.at);
+  } else {
+    time.dateTime = at.toISOString();
+    time.title = at.toLocaleString();
+    time.textContent = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  header.append(name, time);
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  if (!own) bubble.dataset.variant = "secondary";
+  const text = document.createElement("div");
+  text.className = "bubble-content";
+  text.textContent = message.text;
+  bubble.append(text);
+  content.append(header, bubble);
+
+  row.append(avatar, content);
+  item.append(row);
+  return item;
+}
+
 function renderMessages() {
-  messagesEl.replaceChildren();
   if (!roomDoc) {
-    const hint = document.createElement("div");
-    hint.className = "empty";
-    hint.textContent = "Join a room to see the chat.";
-    messagesEl.append(hint);
+    messagesEl.replaceChildren(markerItem("Join a room to see the chat."));
     return;
   }
   // Displayed chronologically. The CRDT list order records where each writer
@@ -966,23 +1099,22 @@ function renderMessages() {
     .map((message, index) => ({ message, index, at: Date.parse(message.at) || 0 }))
     .sort((a, b) => a.at - b.at || a.index - b.index)
     .map(({ message }) => message);
-  for (const message of messages) {
-    const row = document.createElement("div");
-    row.className = `message${message.from === identity.peerId ? " own" : ""}`;
+  // Re-rendering replaces every row; the Session keeps a reader who scrolled up where they are.
+  const follow = globalThis.df$?.shadcn?.session?.isAtEnd(chatSession) ?? true;
+  messagesEl.replaceChildren(...(messages.length ? messages.map(messageItem) : [markerItem("No messages yet. Say hi.")]));
+  if (follow) globalThis.df$?.shadcn?.session?.scrollToEnd(chatSession);
+}
 
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    const time = new Date(message.at);
-    meta.textContent = `${message.nickname} · ${Number.isNaN(time) ? message.at : time.toLocaleString()}`;
-
-    const body = document.createElement("span");
-    body.className = "text";
-    body.textContent = message.text;
-
-    row.append(meta, body);
-    messagesEl.append(row);
+/** The devtools' view of the room's CRDT document: its state as JSON, and how many ops from how many writers. */
+function renderInspector() {
+  if (!roomDoc) {
+    crdtStateEl.replaceChildren(...jsonLines("// Join a room: its CRDT document shows here."));
+    crdtSummary.textContent = "No room document yet";
+    return;
   }
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  crdtStateEl.replaceChildren(...jsonLines(JSON.stringify(roomDoc.state, null, 2)));
+  const writers = Object.keys(roomDoc.versionVector).length;
+  crdtSummary.textContent = `${roomDoc.operationCount} ops from ${writers} writer${writers === 1 ? "" : "s"} (page loads) · doc "${roomDoc.id}"`;
 }
 
 function renderAll() {
@@ -990,12 +1122,13 @@ function renderAll() {
   renderConnections();
   renderMembers();
   renderMessages();
+  renderInspector();
 }
 
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
-$("set-nickname").addEventListener("click", () => {
+function applyNickname() {
   const nickname = nicknameInput.value.trim();
   if (!nickname) return;
   identity = { ...identity, nickname };
@@ -1003,7 +1136,44 @@ $("set-nickname").addEventListener("click", () => {
   announceNickname();
   renderAll();
   log(`Nickname set to "${nickname}".`);
-});
+}
+$("set-nickname").addEventListener("click", applyNickname);
+
+// ---------------------------------------------------------------------------
+// The connect wizard: one panel at a time, so each choice is explained where it
+// is made. The room path asks for the server, this peer and a room; the manual
+// path skips the server and ends with the file exchange. Back keeps every value.
+// ---------------------------------------------------------------------------
+const FLOWS = { room: ["mode", "server", "peer", "room"], manual: ["mode", "peer", "files"] };
+let wizardStep = 0;
+const wizardMode = () => document.querySelector('input[name="mode"]:checked')?.value ?? "room";
+
+function renderWizard() {
+  const mode = wizardMode();
+  const flow = FLOWS[mode];
+  wizardStep = Math.min(wizardStep, flow.length - 1);
+  for (const panel of document.querySelectorAll("[data-panel]")) panel.hidden = panel.dataset.panel !== flow[wizardStep];
+  for (const list of document.querySelectorAll("[data-steps-for]")) {
+    list.hidden = list.dataset.stepsFor !== mode;
+    // The Steps component marks the earlier steps complete and this one current (its State API).
+    if (!list.hidden) list.api?.setState("default", { activeStep: wizardStep + 1 });
+  }
+  wizardBack.hidden = wizardStep === 0;
+  wizardNext.hidden = wizardStep === flow.length - 1;
+}
+
+function goToStep(step) {
+  const flow = FLOWS[wizardMode()];
+  if (flow[wizardStep] === "peer" && nicknameInput.value.trim() !== identity.nickname) applyNickname(); // Next confirms an edited nickname
+  wizardStep = Math.max(0, Math.min(step, flow.length - 1));
+  renderWizard();
+  if (flow[wizardStep] === "room") refreshRooms(); // the list of the server step 2 named
+  document.querySelector(`[data-panel="${flow[wizardStep]}"]`)?.querySelector("input:not([disabled]), button:not([disabled])")?.focus();
+}
+
+wizardNext.addEventListener("click", () => goToStep(wizardStep + 1));
+wizardBack.addEventListener("click", () => goToStep(wizardStep - 1));
+for (const radio of document.querySelectorAll('input[name="mode"]')) radio.addEventListener("change", renderWizard);
 
 createOfferButton.addEventListener("click", onCreateOffer);
 signalFileInput.addEventListener("change", () => {
@@ -1013,7 +1183,7 @@ signalFileInput.addEventListener("change", () => {
 });
 createRoomButton.addEventListener("click", onCreateRoom);
 joinRoomButton.addEventListener("click", onJoinRoom);
-leaveRoomButton.addEventListener("click", () => onLeaveRoom());
+leaveRoomButton.addEventListener("click", () => (room ? onLeaveRoom() : onLeaveManual()));
 serverUrlInput.addEventListener("change", refreshRooms);
 // A room password belongs to one room: editing the name clears it, so a password
 // typed for one room (e.g. a failed join) never silently protects the next one.
@@ -1058,6 +1228,7 @@ window.addEventListener("pageshow", (event) => {
 renderAll();
 renderNetStatus();
 updateRoomUI();
+renderWizard();
 refreshRooms();
 // The room list is only useful while choosing a room: skip it while in one,
 // while the tab is hidden, and while offline.

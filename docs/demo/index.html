@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>defuss-webrtc demo · P2P chat over WebRTC data channels</title>
+  <meta name="description" content="A P2P chat on defuss-webrtc: a room signaling server or a PEER.json file exchange sets up direct WebRTC data channels, and a schema-aware CRDT syncs the chat between every peer.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='18' cy='5' r='3'/%3E%3Ccircle cx='6' cy='12' r='3'/%3E%3Ccircle cx='18' cy='19' r='3'/%3E%3Cpath d='m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98'/%3E%3C/svg%3E">
+  <script>
+    // Before paint, before df$ exists (defuss-shadcn Dark Mode guide): the theme saved by the landing page's switch,
+    // else the OS preference, which this page then follows live. The key is the one every defuss-shadcn site uses; a
+    // defuss-store envelope (the defuss-store site writes one) is read as its value.
+    let saved = '';
+    try {
+      const raw = JSON.parse(localStorage.getItem('defuss-shadcn-theme'));
+      saved = raw && raw.format === 'defuss-store' ? raw.value : raw;
+    } catch {}
+    const scheme = matchMedia('(prefers-color-scheme: dark)');
+    const paintScheme = () => {
+      const dark = saved === 'dark' || (saved !== 'light' && scheme.matches);
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    };
+    paintScheme();
+    scheme.addEventListener('change', paintScheme);
+  </script>
+  <!-- defuss-shadcn from jsDelivr at an exact release, pinned by Subresource Integrity. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/core.min.css" integrity="sha384-XTkN5+CRRKO70LZ4OcV6O+kj6BY5lxdsRQ02oMz3kDCm9kd4B+16jbojkbgrbL0e" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/all.min.css" integrity="sha384-3N21mZZQYTo6BWRxl629QHRrstw0IXVKRonDLdRbrYlODgFskMA/kODfnDX/gNk4" crossorigin="anonymous">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg class="sr-only" aria-hidden="true">
+  <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6m8 14h8"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></symbol>
+</svg>
+
+<main class="wr-app">
+  <header class="wr-app-head">
+    <a class="wr-brand" href="../" target="_top"><svg class="wr-icon" aria-hidden="true"><use href="#i-logo"/></svg>defuss-webrtc <span class="wr-brand-sub">demo</span></a>
+    <div class="wr-app-badges">
+      <span class="badge" data-variant="outline" id="peer-label" hidden></span>
+      <span id="net-status" class="badge" data-variant="secondary" role="status" aria-live="polite">online</span>
+    </div>
+  </header>
+
+  <!-- Two views of one peer, side by side as tabs: the connection (then the chat) and what happens underneath. -->
+  <div class="tabs wr-views">
+    <div class="tab-list" role="tablist" aria-label="Demo views">
+      <button class="tab-trigger" role="tab" aria-selected="true" aria-controls="view-main" id="tab-main"><svg class="wr-icon" aria-hidden="true"><use href="#i-chat"/></svg><span id="tab-main-label">Connect</span></button>
+      <button class="tab-trigger" role="tab" aria-selected="false" aria-controls="view-devtools" id="tab-devtools" tabindex="-1"><svg class="wr-icon" aria-hidden="true"><use href="#i-terminal"/></svg>Peer devtools</button>
+    </div>
+
+    <div class="tab-content wr-main" role="tabpanel" id="view-main" aria-labelledby="tab-main" tabindex="0">
+      <!-- Until this peer has a chat document: a step-by-step connection, room server or manual. -->
+      <section class="card wr-wizard" id="connect" aria-labelledby="connect-title">
+        <div class="card-header">
+          <h1 class="card-title" id="connect-title">Connect this peer</h1>
+          <ol class="steps" data-size="sm" data-steps-for="room" aria-label="Steps with a room server">
+          <li class="step" data-status="current" aria-current="step">
+            <div class="step-indicator">1</div>
+            <div class="step-content"><p class="step-title">Mode</p><p class="step-description">Server or files</p></div>
+          </li>
+          <li class="step">
+            <div class="step-indicator">2</div>
+            <div class="step-content"><p class="step-title">Signal server</p><p class="step-description">URL, password</p></div>
+          </li>
+          <li class="step">
+            <div class="step-indicator">3</div>
+            <div class="step-content"><p class="step-title">This peer</p><p class="step-description">Nickname, STUN</p></div>
+          </li>
+          <li class="step">
+            <div class="step-indicator">4</div>
+            <div class="step-content"><p class="step-title">Room</p><p class="step-description">Create or join</p></div>
+          </li>
+          </ol>
+          <ol class="steps" data-size="sm" data-steps-for="manual" aria-label="Steps without a server" hidden>
+          <li class="step" data-status="current" aria-current="step">
+            <div class="step-indicator">1</div>
+            <div class="step-content"><p class="step-title">Mode</p><p class="step-description">Server or files</p></div>
+          </li>
+          <li class="step">
+            <div class="step-indicator">2</div>
+            <div class="step-content"><p class="step-title">This peer</p><p class="step-description">Nickname, STUN</p></div>
+          </li>
+          <li class="step">
+            <div class="step-indicator">3</div>
+            <div class="step-content"><p class="step-title">PEER.json</p><p class="step-description">Offer and answer</p></div>
+          </li>
+          </ol>
+        </div>
+
+        <div class="card-content">
+          <section class="wr-panel" data-panel="mode" aria-labelledby="panel-mode-title">
+            <h2 class="wr-panel-title" id="panel-mode-title">How should the peers find each other?</h2>
+            <fieldset class="radio-group">
+              <legend class="sr-only">Signaling mode</legend>
+              <div class="radio-item-block">
+                <input class="radio" type="radio" name="mode" id="mode-room" value="room" checked>
+                <label for="mode-room">Room server</label>
+                <span class="radio-description">A signaling server brokers one offer and one answer per pair of peers; everyone in a room connects to everyone. Chat never passes through it.</span>
+              </div>
+              <div class="radio-item-block">
+                <input class="radio" type="radio" name="mode" id="mode-manual" value="manual">
+                <label for="mode-manual">Manual, no server</label>
+                <span class="radio-description">Two peers swap one offer file and one answer file by any channel: chat, email, USB stick. No server at all.</span>
+              </div>
+            </fieldset>
+          </section>
+
+          <section class="wr-panel" data-panel="server" aria-labelledby="panel-server-title" hidden>
+            <h2 class="wr-panel-title" id="panel-server-title">Which signaling server?</h2>
+            <div class="form-field">
+              <label class="label" for="server-url">Signal server URL</label>
+              <input class="input" id="server-url" type="text" value="https://defuss-webrtc.vercel.app" autocomplete="off" aria-describedby="server-url-desc">
+              <p class="field-description" id="server-url-desc">The hosted default runs on Vercel; <code>server/</code> in the repository runs one on Node.js.</p>
+            </div>
+            <div class="form-field">
+              <label class="label" for="server-password">Server password <span class="label-hint">(optional)</span></label>
+              <input class="input" id="server-password" type="password" placeholder="Only if the server requires one" autocomplete="off">
+            </div>
+          </section>
+
+          <section class="wr-panel" data-panel="peer" aria-labelledby="panel-peer-title" hidden>
+            <h2 class="wr-panel-title" id="panel-peer-title">Who is this peer?</h2>
+            <div class="wr-field-row">
+              <div class="form-field">
+                <label class="label" for="nickname">Nickname</label>
+                <input class="input" id="nickname" type="text" placeholder="e.g. Alice" autocomplete="off">
+              </div>
+              <button class="btn" data-variant="outline" id="set-nickname">Set</button>
+            </div>
+            <p id="identity-status" class="wr-hint wr-mono"></p>
+            <div class="form-field">
+              <label class="label" for="stun-servers">STUN server(s)</label>
+              <input class="input" id="stun-servers" type="text" value="stun:stun.cloudflare.com:3478" autocomplete="off" aria-describedby="stun-desc">
+              <p class="field-description" id="stun-desc">Comma separated. STUN tells this browser its public address; empty means host candidates only (same machine or LAN).</p>
+            </div>
+          </section>
+
+          <section class="wr-panel" data-panel="room" aria-labelledby="panel-room-title" hidden>
+            <h2 class="wr-panel-title" id="panel-room-title">Create a room, or join one</h2>
+            <div class="wr-field-row">
+              <div class="form-field">
+                <label class="label" for="room-name">Room name</label>
+                <input class="input" id="room-name" type="text" placeholder="e.g. lobby" autocomplete="off">
+              </div>
+              <div class="form-field">
+                <label class="label" for="room-password">Room password <span class="label-hint">(optional)</span></label>
+                <input class="input" id="room-password" type="password" placeholder="Protects a new room, unlocks a protected one" autocomplete="off">
+              </div>
+            </div>
+            <div class="wr-actions">
+              <button class="btn" id="create-room">Create room</button>
+              <button class="btn" data-variant="secondary" id="join-room">Join room</button>
+            </div>
+            <div id="room-alert" class="alert" role="alert" hidden>
+              <div class="alert-content">
+                <h5 class="alert-title"></h5>
+                <p class="alert-description"></p>
+              </div>
+            </div>
+            <div class="wr-block">
+              <h3 class="wr-heading">Rooms on this server</h3>
+              <ul id="rooms" class="wr-list"></ul>
+            </div>
+          </section>
+
+          <section class="wr-panel" data-panel="files" aria-labelledby="panel-files-title" hidden>
+            <h2 class="wr-panel-title" id="panel-files-title">Swap PEER.json files</h2>
+            <ol class="wr-steps">
+              <li>Peer A clicks <em>Create offer</em> and sends the downloaded PEER.json to peer B (chat, email, USB stick, …). Keep this tab open: the offer belongs to it.</li>
+              <li>Peer B uploads that file. An answer PEER.json downloads automatically; B sends it back to A.</li>
+              <li>Peer A uploads the answer. The data channel opens and both peers switch to the chat.</li>
+            </ol>
+            <div class="wr-field-row">
+              <button class="btn" data-variant="outline" id="create-offer"><svg class="wr-icon" aria-hidden="true"><use href="#i-download"/></svg>Create offer &amp; download PEER.json</button>
+              <div class="form-field">
+                <label class="label" for="signal-file">Upload PEER.json (offer or answer)</label>
+                <input class="file-input" id="signal-file" type="file" accept="application/json,.json">
+              </div>
+            </div>
+            <p class="wr-hint">The file holds this peer's SDP and ICE candidates: send it only to the peer you mean.</p>
+          </section>
+        </div>
+
+        <div class="card-footer wr-wizard-nav">
+          <button class="btn" data-variant="outline" id="wizard-back" hidden>Back</button>
+          <span class="wr-spacer"></span>
+          <button class="btn" id="wizard-next">Next</button>
+        </div>
+      </section>
+
+      <!-- Once this peer has a chat document: the room (or the manual link) and its chat. -->
+      <section class="card wr-room" id="room-view" aria-labelledby="room-status" hidden>
+        <div class="wr-room-head">
+          <div class="wr-room-copy">
+            <p id="room-status" class="wr-room-status">Create a room or join an existing one.</p>
+            <p id="members" class="wr-hint"></p>
+          </div>
+          <span class="badge" data-variant="outline" id="link-status">waiting for a peer</span>
+          <button class="btn" data-variant="outline" data-size="sm" id="leave-room" disabled>Leave room</button>
+        </div>
+        <section class="session wr-session" id="chat" aria-label="Chat messages">
+          <div class="session-viewport" aria-label="Messages">
+            <div class="session-content" id="messages"></div>
+            <button type="button" class="session-scroll-button" data-to="end" aria-label="Scroll to the latest message"></button>
+          </div>
+          <div class="session-footer">
+            <form class="textarea-group" id="chat-form" aria-label="Message composer" autocomplete="off">
+              <textarea class="textarea" id="message-input" data-rows="1" data-max-rows="4" maxlength="2000" aria-label="Message" placeholder="Join a room to chat…" disabled></textarea>
+              <div class="textarea-group-actions">
+                <span class="wr-hint">Enter sends, Shift+Enter breaks the line</span>
+                <span class="textarea-group-spacer"></span>
+                <button class="btn" data-size="icon-sm" type="submit" aria-label="Send" disabled><svg class="wr-icon" aria-hidden="true"><use href="#i-send"/></svg></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </section>
+    </div>
+
+    <div class="tab-content" role="tabpanel" id="view-devtools" aria-labelledby="tab-devtools" tabindex="0" hidden>
+      <section class="card wr-devtools" id="devtools" aria-label="Peer devtools">
+      <div class="card-content wr-devtools-body">
+        <section class="wr-block" aria-labelledby="dt-connections">
+          <h3 class="wr-heading" id="dt-connections">Connections</h3>
+          <ul id="connections" class="wr-list"></ul>
+        </section>
+        <section class="wr-block" aria-labelledby="dt-state">
+          <h3 class="wr-heading" id="dt-state">CRDT document <code>roomDoc.state</code></h3>
+          <figure class="mk-code-block wr-state" data-variant="file">
+            <pre tabindex="0" aria-labelledby="dt-state"><code id="crdt-state"></code></pre>
+          </figure>
+          <p class="wr-hint" id="crdt-summary">No room document yet</p>
+        </section>
+        <section class="wr-block" aria-labelledby="dt-log">
+          <h3 class="wr-heading" id="dt-log">Log</h3>
+          <pre id="log" class="wr-log" tabindex="0" aria-labelledby="dt-log"></pre>
+        </section>
+        <section class="wr-block" aria-labelledby="dt-save">
+          <h3 class="wr-heading" id="dt-save">Save / restore state</h3>
+          <p class="wr-hint"><em>Save state</em> downloads your identity plus the chat's full CRDT history as JSON. Restoring such a file continues as that peer: same peer id, nickname and chat state.</p>
+          <div class="wr-field-row">
+            <button class="btn" data-variant="outline" data-size="sm" id="save-state" disabled>Save state</button>
+            <div class="form-field">
+              <label class="label" for="state-file">Restore state</label>
+              <input class="file-input" id="state-file" type="file" accept="application/json,.json">
+            </div>
+          </div>
+        </section>
+      </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="https://cdn.jsdelivr.net/npm/defuss-shadcn@0.9.8/dist/components/all.min.js" integrity="sha384-Lk87A4KViuU62PT7Hy5Qw2DHzw0iEtvi2huW/2h9963U/cZLBARdRf7LZMCsirTa" crossorigin="anonymous"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
