@@ -1,0 +1,4 @@
+# Node for development and CI (jdx/mise-action); `make setup` runs `mise install`.
+# The Makefile verbs were verified on this version (coverage relies on `node --test --test-isolation=none`).
+[tools]
+node = "24.14.0"

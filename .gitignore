@@ -3,3 +3,12 @@ dist/
 .DS_Store
 test-results/
 playwright-report/
+.env
+var/*
+tmp/*
+output/*
+input/*
+.agents/SWARM_STATUS.yaml
+coverage/
+.cache/
+__pycache__/

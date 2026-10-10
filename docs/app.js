@@ -697,16 +697,17 @@ async function rejoinRoom(reason) {
     if (outcome === "created") log(`Room "${name}" no longer existed — created it again; you are the moderator.`);
     renderConnections();
   } catch (error) {
+    let failure = error;
     if (error.code === "ROOM_NOT_FOUND") {
       try {
         await roomApi("POST", roomPath(name), { peerId: identity.peerId, nickname: identity.nickname, password: password || undefined });
         log(`Room "${name}" no longer existed — created it again; you are the moderator.`);
         return;
       } catch (createError) {
-        error = createError;
+        failure = createError;
       }
     }
-    log(`Rejoin failed: ${error.message} — will retry.`);
+    log(`Rejoin failed: ${failure.message} — will retry.`);
   }
 }
 

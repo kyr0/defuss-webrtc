@@ -1,7 +1,7 @@
 import { assertJsonValue, cloneJson, stableStringify, utf8Bytes, type JsonValue } from "../json.js";
 import { randomId } from "../id.js";
-import { canonicalSchema, resolveSchemaPath, schemaFingerprint, type InferSchema, type ListSchema, type MapSchema, type SchemaNode, type SetSchema } from "./schema.js";
-import { compareOp, opId, samePath, type CrdtOp, type CrdtPath, type ListInsertOp, type OpBase, type SetAddOp } from "./ops.js";
+import { canonicalSchema, resolveSchemaPath, schemaFingerprint, type InferSchema, type ListSchema, type SchemaNode, type SetSchema } from "./schema.js";
+import { compareOp, opId, samePath, type CrdtOp, type CrdtPath, type OpBase, type SetAddOp } from "./ops.js";
 import { CRDT_PROTOCOL, type HelloMessage, type OpsMessage, type VersionVector, type WireMessage } from "./wire.js";
 
 export interface CrdtDocumentOptions<S extends SchemaNode> {

@@ -177,6 +177,8 @@ async function open(browser, nickname, options) {
   return peer;
 }
 
+// Playwright reads fixture names from the first parameter and rejects anything but an object pattern.
+// oxlint-disable-next-line no-empty-pattern
 test.afterEach(async ({}, testInfo) => {
   const requests = peers.reduce((sum, peer) => sum + peer.signalRequests, 0);
   totalSignalRequests += requests;

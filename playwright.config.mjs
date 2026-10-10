@@ -16,7 +16,9 @@ export default defineConfig({
   workers: REMOTE ? 1 : 2,
   maxFailures: REMOTE ? 1 : 0,
   grep: REMOTE_SMOKE_ONLY ? /@remote/ : undefined,
-  reporter: [["list"]],
+  // VERIFIED: results land in output/ (gitignored), where `make e2e` and the defuss-vae gate look for fresh evidence.
+  reporter: [["list"], ["junit", { outputFile: "output/playwright/junit.xml" }]],
+  outputDir: "output/playwright/results",
   use: {
     // Full headless Chromium. Chromium hides host IPs behind mDNS ".local" names
     // by default; those do not resolve in CI/sandboxed hosts, so peers would never
